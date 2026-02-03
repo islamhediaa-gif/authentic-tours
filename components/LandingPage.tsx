@@ -4,7 +4,7 @@ import {
   ShieldCheck, Zap, BarChart3, Users, Globe, CheckCircle2, 
   MessageSquare, ArrowLeft, ArrowRight, LayoutDashboard, 
   Database, Lock, Smartphone, Headphones, Building2, X,
-  Sparkles
+  Sparkles, RefreshCw
 } from 'lucide-react';
 
 interface LandingPageProps {
