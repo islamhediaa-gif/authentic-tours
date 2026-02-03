@@ -108,11 +108,7 @@ const INITIAL_SETTINGS: CompanySettings = {
 const isDefaultBrandingName = (name: string | undefined) => {
   return !name || 
          name === 'نِـبـراس ERP' || 
-         name === 'نِـبـراس المحاسبي' || 
-         name === 'Authentic PRO' ||
-         name.includes('أوسنتيك') || 
-         name.includes('اوسنتيك') ||
-         name.includes('Authentic');
+         name === 'نِـبـراس المحاسبي';
 };
 
 import { DataService } from './DataService';
@@ -209,7 +205,19 @@ const App: React.FC = () => {
   const sortedTreasuries = useMemo(() => {
     return [...treasuries].sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ar'));
   }, [treasuries]);
-  const [settings, setSettings] = useState<CompanySettings>(INITIAL_SETTINGS);
+  const [settings, setSettings] = useState<CompanySettings>(() => {
+    if (typeof window === 'undefined') return INITIAL_SETTINGS;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('client') === 'authentic') {
+      return { ...INITIAL_SETTINGS, name: 'أوسنتيك للسياحة' };
+    }
+    return INITIAL_SETTINGS;
+  });
+  const [isInitialSyncing, setIsInitialSyncing] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    const params = new URLSearchParams(window.location.search);
+    return params.get('client') === 'authentic';
+  });
   const [displayCurrency, setDisplayCurrency] = useState<string>(INITIAL_SETTINGS.baseCurrency);
   const [isDataLoaded, setIsDataLoaded] = useState(false);
   const [syncStatus, setSyncStatus] = useState<'connected' | 'error' | 'syncing' | 'idle'>('idle');
@@ -879,12 +887,14 @@ const App: React.FC = () => {
     if (res.success && res.data) {
       applyData(res.data, true);
       setSyncStatus('connected');
-      notify("تم سحب البيانات من السحابة بنجاح", "success");
+      setIsInitialSyncing(false);
+      // notify("تم سحب البيانات من السحابة بنجاح", "success");
     } else {
       setSyncStatus('error');
-      notify("فشل سحب البيانات من السحابة", "error");
+      setIsInitialSyncing(false);
+      // notify("فشل سحب البيانات من السحابة", "error");
     }
-  }, [applyData, notify]);
+  }, [applyData]);
 
   const manualPush = async (force = false) => {
     const isActivated = licenseInfo.isActivated && validateLicense(licenseInfo.machineId, licenseInfo.licenseKey);
@@ -2827,6 +2837,11 @@ const App: React.FC = () => {
     return (
       <div className="flex flex-col h-screen">
         <TitleBar appName={displayAppName} />
+        {isInitialSyncing && (
+           <div className="fixed top-[50px] right-0 left-0 bg-indigo-600 text-white text-[10px] font-bold py-1 px-4 text-center z-[100] animate-pulse">
+              جاري مزامنة إعدادات الشركة وبيانات المستخدمين من السحابة...
+           </div>
+        )}
         <Login 
           appName={displayAppName} 
           logo={displayLogo} 

@@ -152,7 +152,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onStart }) => {
         <div className="max-w-7xl mx-auto text-center relative z-10">
           <div className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-500/10 border border-indigo-500/20 rounded-full mb-8 animate-bounce">
             <Sparkles size={16} className="text-indigo-400" />
-            <span className="text-xs font-bold text-indigo-300 uppercase tracking-widest">إصدار v3.0.4 الاحترافي</span>
+            <span className="text-xs font-bold text-indigo-300 uppercase tracking-widest">إصدار v3.0.5 الاحترافي</span>
           </div>
           <h1 className="text-5xl md:text-7xl font-black mb-8 leading-tight tracking-tighter">
             أدِر أعمالك بذكاء مع <br />
