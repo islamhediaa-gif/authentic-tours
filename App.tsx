@@ -12,7 +12,10 @@ import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 import TitleBar from './components/TitleBar';
 import Login from './components/Login';
-import { CheckCircle2, AlertCircle, Info, CloudSync, ShieldCheck, RefreshCw, TrendingUp, TrendingDown, Loader2, ArrowRight, Lock, Zap, MessageSquare, Copy } from 'lucide-react';
+import { 
+  CheckCircle2, AlertCircle, Info, CloudSync, ShieldCheck, RefreshCw, TrendingUp, TrendingDown, 
+  Loader2, ArrowRight, Lock, Zap, MessageSquare, Copy 
+} from 'lucide-react';
 
 // وظيفة مساعدة لتحميل المكونات بشكل كسول مع إعادة المحاولة في حال فشل التحميل (مثل تحديث المتصفح أثناء النشر)
 function lazyWithRetry(componentImport: () => Promise<any>) {

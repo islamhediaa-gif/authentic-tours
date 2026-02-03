@@ -4,7 +4,7 @@ import {
   ShieldCheck, Zap, BarChart3, Users, Globe, CheckCircle2, 
   MessageSquare, ArrowLeft, ArrowRight, LayoutDashboard, 
   Database, Lock, Smartphone, Headphones, Building2, X,
-  Sparkles, RefreshCw
+  Sparkles, RefreshCw as RefreshIcon
 } from 'lucide-react';
 
 interface LandingPageProps {
@@ -72,7 +72,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onStart }) => {
           <div className="max-w-2xl w-full text-center relative z-10 space-y-12">
             <div className="flex justify-center">
               <div className="w-24 h-24 bg-indigo-600 rounded-3xl flex items-center justify-center shadow-2xl shadow-indigo-600/40 animate-bounce">
-                <RefreshCw size={48} className="animate-spin duration-[3000ms]" />
+                <RefreshIcon size={48} className="animate-spin duration-[3000ms]" />
               </div>
             </div>
             
