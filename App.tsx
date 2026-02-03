@@ -116,6 +116,7 @@ import { DataService } from './DataService';
 import { SupabaseService } from './SupabaseService';
 import { compareArabic } from './utils/arabicUtils';
 
+// Nebras ERP - Integrated Enterprise Architecture 2026
 const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(() => {
     if (typeof window === 'undefined') return null;
