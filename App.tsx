@@ -136,6 +136,7 @@ const App: React.FC = () => {
   const [selectedTripId, setSelectedTripId] = useState<string | null>(null);
   const [globalEditId, setGlobalEditId] = useState<string | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{msg: string, onConfirm: () => void} | null>(null);
+  const [showLanding, setShowLanding] = useState(true);
 
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -2789,10 +2790,36 @@ const App: React.FC = () => {
   );
 
   if (!currentUser) {
+    if (showLanding) {
+      return (
+        <div className="flex flex-col h-screen">
+          <TitleBar appName={displayAppName} />
+          <React.Suspense fallback={
+             <div className="h-screen w-screen flex items-center justify-center bg-[#020617]">
+               <Loader2 className="animate-spin text-white" size={40} />
+             </div>
+          }>
+            <LandingPage />
+            <button 
+              onClick={() => setShowLanding(false)}
+              className="fixed bottom-10 left-10 z-50 px-8 py-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-full font-bold shadow-2xl flex items-center gap-2 transition-all transform hover:scale-110 active:scale-95"
+            >
+              <Lock size={20} />
+              دخول النظام
+            </button>
+          </React.Suspense>
+        </div>
+      );
+    }
+
     return (
       <div className="flex flex-col h-screen">
         <TitleBar appName={displayAppName} />
-        <Login appName={displayAppName} logo={displayLogo} onLogin={(u, p) => {
+        <Login 
+          appName={displayAppName} 
+          logo={displayLogo} 
+          onBack={() => setShowLanding(true)}
+          onLogin={(u, p) => {
           console.log(`[Login] Attempt for ${u} in tenant ${DataService.getTenantId()}.`);
           
           // إذا حاول المستخدم الدخول بأسماء تابعة لـ Authentic وهو في مستأجر آخر، نوجهه فوراً

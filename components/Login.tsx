@@ -5,11 +5,12 @@ import pkg from '../package.json';
 
 interface LoginProps {
   onLogin: (user: string, pass: string) => void;
+  onBack?: () => void;
   appName: string;
   logo?: string;
 }
 
-const Login: React.FC<LoginProps> = ({ onLogin, appName, logo }) => {
+const Login: React.FC<LoginProps> = ({ onLogin, onBack, appName, logo }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -125,6 +126,16 @@ const Login: React.FC<LoginProps> = ({ onLogin, appName, logo }) => {
               >
                 دخول النظام
               </button>
+
+              {onBack && (
+                <button
+                  type="button"
+                  onClick={onBack}
+                  className="w-full bg-slate-800 hover:bg-slate-700 text-slate-300 py-3 rounded-xl font-bold text-sm transition-all active:scale-[0.98] flex items-center justify-center gap-2"
+                >
+                  رجوع للرئيسية
+                </button>
+              )}
             </form>
 
             <div className="mt-10 pt-8 border-t border-slate-800 flex justify-between items-center opacity-50">
