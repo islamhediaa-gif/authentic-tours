@@ -140,7 +140,6 @@ const App: React.FC = () => {
   const [selectedTripId, setSelectedTripId] = useState<string | null>(null);
   const [globalEditId, setGlobalEditId] = useState<string | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{msg: string, onConfirm: () => void} | null>(null);
-  const [showLanding, setShowLanding] = useState(true);
 
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
