@@ -44,20 +44,19 @@ const getTenantId = () => {
   const params = new URLSearchParams(window.location.search);
   let client = params.get('client');
   
-  // إجبار الجميع على استخدام authentic إذا حاولوا استخدام الروابط القديمة
-  const forceAuthentic = (id: string) => {
-    const oldTenants = ['osntic', 'nebras', 'samar', 'nada', 'hedia', 'islam-hedia', 'default'];
-    return oldTenants.includes(id.toLowerCase()) ? 'authentic' : id;
+  // التحقق من اسم الشركة المختار
+  const validateTenant = (id: string) => {
+    return id.toLowerCase();
   };
 
   if (client) {
-    const mapped = forceAuthentic(client);
+    const mapped = validateTenant(client);
     localStorage.setItem('nebras_tenant_id', mapped);
     return mapped;
   }
   
   const saved = localStorage.getItem('nebras_tenant_id') || 'authentic';
-  return forceAuthentic(saved);
+  return validateTenant(saved);
 };
 
 const getClientName = () => {

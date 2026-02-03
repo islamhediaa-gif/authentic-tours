@@ -86,7 +86,7 @@ const getIpcRenderer = () => {
 const getBrowserMachineId = () => {
   if (typeof window === 'undefined') return "SERVER";
   const params = new URLSearchParams(window.location.search);
-  const tenantId = params.get('client') || localStorage.getItem('nebras_tenant_id') || 'default';
+  const tenantId = params.get('client') || localStorage.getItem('nebras_tenant_id') || 'authentic';
   // جعل هوية الجهاز ثابتة ومربوطة باسم العميل لضمان عمل الكود دائماً لنفس العميل
   return `WEB-${tenantId.toUpperCase()}`;
 };
@@ -1072,9 +1072,8 @@ const App: React.FC = () => {
     const tenantLower = companyName.toLowerCase();
     setPendingTenant(tenantLower);
 
-    // توحيد الجميع تحت authentic
-    const unifiedTenants = ['authentic', 'osntic', 'nebras', 'samar', 'nada', 'hedia', 'islam-hedia', 'default'];
-    if (unifiedTenants.includes(tenantLower)) {
+    // توجيه شركة authentic للسيرفر الخاص بها
+    if (tenantLower === 'authentic') {
       window.location.href = `?client=authentic`;
       return;
     }
@@ -2826,7 +2825,7 @@ const App: React.FC = () => {
           console.log(`[Login] Attempt for ${u} in tenant ${DataService.getTenantId()}.`);
           
           // إذا حاول المستخدم الدخول بأسماء تابعة لـ Authentic وهو في مستأجر آخر، نوجهه فوراً
-          const authenticUsers = ['authentic', 'nada', 'samar', 'admin'];
+          const authenticUsers = ['authentic', 'admin'];
           if (authenticUsers.includes(u.toLowerCase()) && DataService.getTenantId() !== 'authentic') {
             console.log(`[Login] Authentic user '${u}' detected. Redirecting to authentic tenant...`);
             localStorage.setItem('nebras_tenant_id', 'authentic');
