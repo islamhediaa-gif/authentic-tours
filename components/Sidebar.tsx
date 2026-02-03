@@ -168,7 +168,7 @@ const Sidebar: React.FC<SidebarProps> = ({
 
         <div className="mt-2 py-1 px-4 bg-indigo-500/10 border border-indigo-500/20 rounded-xl">
           <p className="text-[10px] text-indigo-400 font-black text-center tracking-[0.3em] uppercase">
-            v3.0.2-RELEASE
+            v3.0.4-RELEASE
           </p>
         </div>
         <p className="text-[8px] text-slate-600 text-opacity-40 font-bold text-center mt-2">م / إسلام هديه © 2026</p>

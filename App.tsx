@@ -198,9 +198,10 @@ const App: React.FC = () => {
   const sortedCurrencies = useMemo(() => {
     return [...currencies].sort((a, b) => (a.code || '').localeCompare(b.code || '', 'ar'));
   }, [currencies]);
-  const [users, setUsers] = useState<User[]>([
-    { id: 'admin', username: 'admin', password: 'admin', name: 'المدير العام', role: 'ADMIN', permissions: ['ADMIN_ONLY'] }
-  ]);
+  const [users, setUsers] = useState<User[]>(() => {
+    const defaultAdmin = { id: 'admin', username: 'admin', password: 'admin', name: 'المدير العام', role: 'ADMIN', permissions: ['ADMIN_ONLY'] };
+    return [defaultAdmin as User];
+  });
   const [treasuries, setTreasuries] = useState<Treasury[]>([
     { id: 't1', name: 'الخزينة الرئيسية', type: 'CASH', openingBalance: 0, balance: 3000 },
     { id: 't2', name: 'البنك التجاري', type: 'BANK', openingBalance: 0, balance: 0 }
@@ -933,6 +934,15 @@ const App: React.FC = () => {
     // إذا لم يكن هناك اسم عميل في الرابط، نظهر الصفحة التعريفية دائماً لتمكين المستخدم من اختيار الشركة
     return true;
   });
+
+  // Force cloud sync on mount for authentic tenant
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('client') === 'authentic') {
+      console.log("[App] Auto-syncing authentic tenant from cloud...");
+      manualPull();
+    }
+  }, [manualPull]);
 
   useEffect(() => {
     localStorage.setItem('nebras_dark_mode', isDarkMode.toString());
