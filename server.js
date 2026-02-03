@@ -3,7 +3,19 @@ const express = require('express');
 const mysql = require('mysql2/promise');
 const mysqlLib = require('mysql2');
 const cors = require('cors');
-require('dotenv').config();
+const fs = require('fs');
+const path = require('path');
+
+// Load environment variables from .env or .env.local
+if (fs.existsSync(path.join(__dirname, '.env.local'))) {
+  const envConfig = require('dotenv').parse(fs.readFileSync(path.join(__dirname, '.env.local')));
+  for (const k in envConfig) {
+    process.env[k] = envConfig[k];
+  }
+  console.log('Loaded environment from .env.local (Overriding system env)');
+} else {
+  require('dotenv').config();
+}
 
 const app = express();
 app.use(cors({
@@ -14,17 +26,26 @@ app.use(cors({
 app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ limit: '100mb', extended: true }));
 
-// Database connection pool
-const pool = mysql.createPool({
-  host: process.env.MYSQLHOST || 'localhost',
+// Database connection pool configuration
+const dbConfig = process.env.MYSQL_URL || process.env.MYSQL_PUBLIC_URL || {
+  host: process.env.MYSQLHOST || 'interchange.proxy.rlwy.net',
   user: process.env.MYSQLUSER || 'root',
-  password: process.env.MYSQLPASSWORD || '',
-  database: process.env.MYSQLDATABASE || 'nebras_erp',
-  port: process.env.MYSQLPORT || 3306,
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0
-});
+  password: process.env.MYSQLPASSWORD || process.env.MYSQL_ROOT_PASSWORD || 'OHkOpzVMmgrPdqejmRMdyymxjFLvbYoK',
+  database: process.env.MYSQLDATABASE || process.env.MYSQL_DATABASE || 'railway',
+  port: process.env.MYSQLPORT || 36607,
+};
+
+console.log(`Connecting to database at ${typeof dbConfig === 'string' ? 'MYSQL_URL' : dbConfig.host + ':' + dbConfig.port}`);
+
+const pool = (typeof dbConfig === 'string') 
+  ? mysql.createPool({ uri: dbConfig, connectTimeout: 30000 })
+  : mysql.createPool({
+      ...dbConfig,
+      waitForConnections: true,
+      connectionLimit: 10,
+      queueLimit: 0,
+      connectTimeout: 30000
+    });
 
 // إنشاء الجداول وتحديث الهيكل إذا لم تكن موجودة
 const initDB = async () => {

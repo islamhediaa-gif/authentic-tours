@@ -3,7 +3,9 @@
 import { CompanyData } from './types';
 import { SupabaseService } from './SupabaseService';
 
-const API_URL = 'https://authentic-tours-production.up.railway.app';
+const API_URL = (typeof window !== 'undefined' && window.location.hostname === 'localhost')
+  ? 'http://localhost:8080'
+  : (import.meta.env.VITE_RAILWAY_API_URL || 'https://authentic-tours-production.up.railway.app');
 
 // Helper to convert string numbers from PostgreSQL/Railway back to actual numbers
 export const sanitizeData = (data: any): any => {
