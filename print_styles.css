@@ -1,0 +1,25 @@
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  .print-grid { 
+    display: grid !important; 
+    grid-template-columns: repeat(12, minmax(0, 1fr)) !important; 
+    gap: 2.5rem !important; 
+  }
+  .print-col-8 { 
+    grid-column: span 8 !important; 
+  }
+  .print-col-4 { 
+    grid-column: span 4 !important; 
+  }
+  body { 
+    -webkit-print-color-adjust: exact !important; 
+    print-color-adjust: exact !important; 
+  }
+  @page { 
+    margin: 0; 
+    size: auto; 
+  }
+}

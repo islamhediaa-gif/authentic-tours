@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: #ffffff;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            -webkit-app-region: drag;
+        }
+        .container {
+            text-align: center;
+        }
+        .logo {
+            width: 120px;
+            height: 120px;
+            margin-bottom: 20px;
+            border-radius: 20px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+        }
+        .title {
+            font-size: 24px;
+            font-weight: bold;
+            color: #0f172a;
+            margin-bottom: 8px;
+            direction: rtl;
+        }
+        .subtitle {
+            font-size: 14px;
+            color: #64748b;
+            margin-bottom: 30px;
+            direction: rtl;
+        }
+        .loader-container {
+            width: 250px;
+            height: 4px;
+            background: #f1f5f9;
+            border-radius: 10px;
+            overflow: hidden;
+            position: relative;
+        }
+        .loader-bar {
+            width: 0%;
+            height: 100%;
+            background: linear-gradient(90deg, #4f46e5, #818cf8);
+            border-radius: 10px;
+            animation: loading 2s ease-in-out infinite;
+        }
+        @keyframes loading {
+            0% { width: 0%; left: 0; }
+            50% { width: 70%; left: 15%; }
+            100% { width: 0%; left: 100%; }
+        }
+        .status {
+            margin-top: 15px;
+            font-size: 11px;
+            color: #94a3b8;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <img src="logo.jfif" class="logo" alt="Nebras Logo">
+        <div class="title">نِـبـراس المحاسبي ERP</div>
+        <div class="subtitle">جاري تهيئة النظام...</div>
+        <div class="loader-container">
+            <div class="loader-bar"></div>
+        </div>
+        <div class="status">Loading Resources</div>
+    </div>
+</body>
+</html>

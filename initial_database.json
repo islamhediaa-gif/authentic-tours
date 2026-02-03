@@ -1,0 +1,50 @@
+{
+  "settings": {
+    "name": "اسم شركتك هنا",
+    "logo": "",
+    "accountantName": "المحاسب العام",
+    "baseCurrency": "EGP",
+    "enableCostCenters": false
+  },
+  "currencies": [
+    { "code": "EGP", "name": "الجنيه المصري", "symbol": "ج.م", "rateToMain": 1 },
+    { "code": "USD", "name": "الدولار الأمريكي", "symbol": "$", "rateToMain": 50 },
+    { "code": "SAR", "name": "الريال السعودي", "symbol": "ر.س", "rateToMain": 13.5 }
+  ],
+  "users": [
+    {
+      "id": "admin-1",
+      "username": "admin",
+      "password": "admin",
+      "name": "مدير النظام",
+      "role": "ADMIN",
+      "permissions": ["ADMIN_ONLY"]
+    }
+  ],
+  "customers": [],
+  "suppliers": [],
+  "partners": [],
+  "treasuries": [
+    { "id": "t-1", "name": "الخزينة الرئيسية", "type": "CASH", "openingBalance": 0, "balance": 0 }
+  ],
+  "employees": [],
+  "transactions": [],
+  "journalEntries": [],
+  "programs": [],
+  "masterTrips": [],
+  "costCenters": [],
+  "shifts": [],
+  "auditLogs": [],
+  "attendanceLogs": [],
+  "leaves": [],
+  "allowances": [],
+  "documents": [],
+  "departments": [],
+  "designations": [],
+  "licenseInfo": {
+    "installationDate": null,
+    "isActivated": false,
+    "licenseKey": "",
+    "machineId": ""
+  }
+}

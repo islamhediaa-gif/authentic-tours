@@ -1,0 +1,13 @@
+node_modules
+dist
+dist-v5
+temp_asar
+temp_asar_extracted
+*.exe
+*.jsc
+*.asar
+.env
+.env.local
+.DS_Store
+Backup_Nebras_*.json
+*.log

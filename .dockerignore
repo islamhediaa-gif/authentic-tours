@@ -1,0 +1,17 @@
+node_modules
+dist
+dist-v5
+src
+components
+public
+.git
+.vercel
+*.exe
+*.json
+!package.json
+!package-lock.json
+Backup_*.json
+*.sql
+*.py
+*.jsc
+*.asar

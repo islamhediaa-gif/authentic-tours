@@ -1,0 +1,192 @@
+@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@200;300;400;500;600;700;800;900&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --primary: #4f46e5;
+  --primary-dark: #3730a3;
+  --secondary: #0f172a;
+  --accent: #10b981;
+  --bg-main: #f8fafc;
+  --bg-card: #ffffff;
+  --text-main: #1e293b;
+  --text-muted: #64748b;
+  --sidebar-w: 260px;
+}
+
+body {
+  font-family: 'Cairo', sans-serif;
+  font-size: 15px;
+  background-color: var(--bg-main);
+  color: var(--text-main);
+  user-select: none;
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Dark Mode Styles */
+.dark body {
+  background-color: #020617;
+  color: #f1f5f9;
+}
+
+.dark .glass-panel {
+  background: rgba(15, 23, 42, 0.8);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.dark .bg-white {
+  background-color: #0f172a;
+}
+
+.dark .text-slate-900 {
+  color: #f1f5f9;
+}
+
+.dark .border-slate-200 {
+  border-color: #1e293b;
+}
+
+.dark .bg-slate-50 {
+  background-color: #1e293b;
+}
+
+.dark .bg-slate-100 {
+  background-color: #1e293b;
+}
+
+.dark input, .dark select, .dark textarea {
+  background-color: #1e293b;
+  color: #f1f5f9;
+  border-color: #334155;
+}
+
+.dark .custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #334155;
+}
+
+/* Custom Premium Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { 
+  background: #cbd5e1; 
+  border-radius: 20px;
+  transition: background 0.3s;
+}
+::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+/* Modern Utility Classes */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.premium-shadow {
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.04), 0 8px 10px -6px rgba(0, 0, 0, 0.04);
+}
+
+.transition-premium {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* نظام الطباعة المطور */
+@media print {
+    @page {
+        size: A4;
+        margin: 10mm;
+    }
+
+    body {
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+    }
+
+    /* إخفاء كل شيء بشكل افتراضي عند الطباعة فقط إذا كنا نستخدم وضع الطباعة المخصص */
+    body.printing-mode #root, .no-print {
+        display: none !important;
+    }
+
+    /* إظهار قسم الطباعة فقط في وضع الطباعة المخصص */
+    body.printing-mode #print-section {
+        display: block !important;
+        visibility: visible !important;
+        position: static !important;
+        width: 100% !important;
+        height: auto !important;
+        background: white !important;
+        padding: 0 !important;
+        margin: 0 !important;
+    }
+
+    body.printing-mode #print-section * {
+        visibility: visible !important;
+    }
+}
+
+/* Animations */
+@keyframes ticker {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+
+.ticker-container {
+  overflow: hidden;
+  white-space: nowrap;
+  width: 100%;
+}
+
+.ticker-content {
+  display: inline-flex;
+  animation: ticker 40s linear infinite;
+  padding-right: 0;
+}
+
+.ticker-content:hover {
+  animation-play-state: paused;
+}
+
+.animate-spin-slow {
+  animation: spin 3s linear infinite;
+}
+
+.animate-bounce-subtle {
+  animation: bounce-subtle 2s ease-in-out infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes bounce-subtle {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-2px); }
+}
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  .print-grid { 
+    display: grid !important; 
+    grid-template-columns: repeat(12, minmax(0, 1fr)) !important; 
+    gap: 2.5rem !important; 
+  }
+  .print-col-8 { 
+    grid-column: span 8 !important; 
+  }
+  .print-col-4 { 
+    grid-column: span 4 !important; 
+  }
+  body { 
+    -webkit-print-color-adjust: exact !important; 
+    print-color-adjust: exact !important; 
+  }
+  @page { 
+    margin: 0; 
+    size: auto; 
+  }
+}
