@@ -4,8 +4,14 @@ import {
   ShieldCheck, Zap, BarChart3, Users, Globe, CheckCircle2, 
   MessageSquare, ArrowLeft, ArrowRight, LayoutDashboard, 
   Database, Lock, Smartphone, Headphones, Building2, X,
-  Sparkles, RefreshCw as RefreshIcon
+  Sparkles, RefreshCw, 
 } from 'lucide-react';
+
+const SparkleIcon = ({ size, className }: { size: number, className: string }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/>
+  </svg>
+);
 
 interface LandingPageProps {
   onStart: (companyName?: string) => void;
@@ -15,7 +21,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onStart }) => {
   const [showPrompt, setShowPrompt] = useState(false);
   const [companyName, setCompanyName] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const isMaintenance = true; // تحويل الموقع إلى وضع التحديث
+  const isMaintenance = false; // تحويل الموقع إلى وضع التحديث
 
   const handleSubscriberLogin = async () => {
     if (companyName.trim()) {
@@ -72,7 +78,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onStart }) => {
           <div className="max-w-2xl w-full text-center relative z-10 space-y-12">
             <div className="flex justify-center">
               <div className="w-24 h-24 bg-indigo-600 rounded-3xl flex items-center justify-center shadow-2xl shadow-indigo-600/40 animate-bounce">
-                <RefreshIcon size={48} className="animate-spin duration-[3000ms]" />
+                <RefreshCw size={48} className="animate-spin duration-[3000ms]" />
               </div>
             </div>
             
@@ -553,11 +559,5 @@ const LandingPage: React.FC<LandingPageProps> = ({ onStart }) => {
     </div>
   );
 };
-
-const SparkleIcon = ({ size, className }: { size: number, className: string }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-    <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/>
-  </svg>
-);
 
 export default LandingPage;
