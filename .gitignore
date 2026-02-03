@@ -11,3 +11,5 @@ temp_asar_extracted
 .DS_Store
 Backup_Nebras_*.json
 *.log
+
+.vercel

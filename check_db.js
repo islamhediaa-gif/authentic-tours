@@ -1,7 +1,13 @@
 const mysql = require('mysql2/promise');
 async function check() {
     try {
-        const db = await mysql.createConnection('mysql://root:fGIsfIuWIDJitWAnvJclmRskHiaREitZ@yamanote.proxy.rlwy.net:40742/railway');
+        const db = await mysql.createConnection({
+            host: 'yamanote.proxy.rlwy.net',
+            user: 'root',
+            password: 'cyGeNwQWgwXcoAHKbyNazocITJaixMVx',
+            database: 'railway',
+            port: 43764
+        });
         const [rows] = await db.execute('SELECT COUNT(*) as count FROM transactions WHERE tenant_id = "authentic"');
         console.log('Current DB Count:', rows[0].count);
         
