@@ -250,7 +250,11 @@ const Dashboard: React.FC<DashboardProps> = ({
     // العثور على أحدث تاريخ معاملة لعرض البيانات حوله بدلاً من الاكتفاء باليوم الحالي
     let latestDate = new Date();
     if (activeJE.length > 0) {
-      const dates = activeJE.map(e => new Date(e.date).getTime()).filter(t => !isNaN(t));
+      const dates = activeJE.map(e => {
+        const d = new Date(e.date);
+        return isNaN(d.getTime()) ? 0 : d.getTime();
+      }).filter(t => t > 0);
+      
       if (dates.length > 0) {
         latestDate = new Date(Math.max(...dates));
       }
@@ -263,7 +267,12 @@ const Dashboard: React.FC<DashboardProps> = ({
     }).reverse();
 
     return last7Days.map(date => {
-      const dayJE = (activeJE || []).filter(e => e && e.date === date);
+      // مقارنة مرنة للتاريخ للتعامل مع تنسيقات MySQL المختلفة
+      const dayJE = (activeJE || []).filter(e => {
+        if (!e || !e.date) return false;
+        const entryDate = new Date(e.date).toISOString().split('T')[0];
+        return entryDate === date;
+      });
 
       let income = 0;
       let expense = 0;

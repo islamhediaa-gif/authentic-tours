@@ -120,7 +120,7 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
-    title: "نبراس المحاسبي ERP - النسخة الاحترافية 3.0.0",
+    title: "نبراس المحاسبي ERP - النسخة الاحترافية 3.0.1",
     icon: path.join(__dirname, 'logo.jfif'),
     backgroundColor: '#ffffff',
     frame: false, // إخفاء الإطار العلوي وشريط المهام بالكامل

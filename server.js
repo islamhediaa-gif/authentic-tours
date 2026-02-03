@@ -19,7 +19,22 @@ if (fs.existsSync(path.join(__dirname, '.env.local'))) {
 
 const app = express();
 app.use(cors({
-  origin: ['https://www.nebras-erp.com', 'https://authentic-tours.vercel.app', 'http://localhost:5173'],
+  origin: function (origin, callback) {
+    const allowedOrigins = [
+      'https://www.nebras-erp.com',
+      'https://authentic-tours.vercel.app',
+      'https://authentic-two-kappa.vercel.app',
+      'http://localhost:5173'
+    ];
+    
+    // السماح بالطلبات التي ليس لها origin (مثل تطبيقات الموبايل أو curl) 
+    // أو الطلبات التي تأتي من الروابط المسموحة أو أي رابط vercel فرعي
+    if (!origin || allowedOrigins.includes(origin) || origin.endsWith('.vercel.app')) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
@@ -33,6 +48,20 @@ const dbConfig = process.env.MYSQL_URL || process.env.MYSQL_PUBLIC_URL || {
   password: process.env.MYSQLPASSWORD || process.env.MYSQL_ROOT_PASSWORD || 'OHkOpzVMmgrPdqejmRMdyymxjFLvbYoK',
   database: process.env.MYSQLDATABASE || process.env.MYSQL_DATABASE || 'railway',
   port: process.env.MYSQLPORT || 36607,
+};
+
+const columnCache = {};
+const getTableColumns = async (table) => {
+  if (columnCache[table]) return columnCache[table];
+  try {
+    const [cols] = await pool.query(`SHOW COLUMNS FROM ??`, [table]);
+    const names = cols.map(c => c.Field);
+    columnCache[table] = names;
+    return names;
+  } catch (err) {
+    console.warn(`Could not fetch columns for ${table}:`, err.message);
+    return null;
+  }
 };
 
 console.log(`Connecting to database at ${typeof dbConfig === 'string' ? 'MYSQL_URL' : dbConfig.host + ':' + dbConfig.port}`);
@@ -180,6 +209,8 @@ app.post('/api/upsert/:table', async (req, res) => {
     if (records.length === 0) return res.json({ success: true });
 
     // Pre-process all records: snake_case and stringify objects
+    const validColumns = await getTableColumns(table);
+    
     const processedRecords = records.map(record => {
       const copy = { ...record };
       // Remove lines if it's a journal entry (we sync them separately now)
@@ -190,6 +221,18 @@ app.post('/api/upsert/:table', async (req, res) => {
       
       const snake = toSnake(copy);
       snake.tenant_id = tenant_id;
+
+      // Filter to only include valid columns if we have them
+      if (validColumns) {
+        const filtered = {};
+        for (const col of validColumns) {
+          if (snake[col] !== undefined) {
+            filtered[col] = snake[col];
+          }
+        }
+        return filtered;
+      }
+      
       return snake;
     });
 
@@ -263,14 +306,37 @@ app.post('/api/backup/save', async (req, res) => {
 });
 
 app.get('/api/backup/load/:userId', async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const [rows] = await pool.execute(
+        `SELECT data FROM user_backups WHERE user_id = ?`,
+        [userId]
+      );
+      if (rows.length === 0) return res.json({ success: false, error: 'Not found' });
+      res.json({ success: true, data: rows[0].data });
+    } catch (error) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Dashboard Summary Endpoint
+app.get('/api/dashboard/summary', async (req, res) => {
   try {
-    const { userId } = req.params;
-    const [rows] = await pool.execute(
-      `SELECT data FROM user_backups WHERE user_id = ?`,
-      [userId]
-    );
-    if (rows.length === 0) return res.json({ success: false, error: 'Not found' });
-    res.json({ success: true, data: rows[0].data });
+    const { tenant_id } = req.query;
+    // استعلام سريع لجلب ملخص الأرقام مباشرة من قاعدة البيانات
+    const [cashRows] = await pool.query(`
+      SELECT SUM(debit - credit) as total_cash 
+      FROM treasury_lines 
+      WHERE tenant_id = ?`, [tenant_id]);
+      
+    res.json({ 
+      success: true, 
+      data: {
+        total_cash: cashRows[0]?.total_cash || 0,
+        customer_debts: 0, // يمكن توسيعه لاحقاً
+        supplier_credits: 0
+      } 
+    });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }

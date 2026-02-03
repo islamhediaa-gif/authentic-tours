@@ -422,7 +422,7 @@ const SmartAssistant: React.FC<SmartAssistantProps> = ({
         </div>
         <div className="mt-3 flex items-center justify-between text-[8px] font-bold text-slate-400 uppercase tracking-widest px-1">
           <span>Nebras X Intelligence</span>
-          <span>v3.0.0 Premium</span>
+          <span>v3.0.1 Premium</span>
         </div>
       </div>
     </div>

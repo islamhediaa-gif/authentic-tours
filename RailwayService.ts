@@ -42,7 +42,7 @@ export const RailwayService = {
   fetchTenantData: async (tableName: string, tenantId: string) => {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 seconds timeout
+      const timeoutId = setTimeout(() => controller.abort(), 120000); // 120 seconds timeout
 
       const response = await fetch(`${API_URL}/api/data/${tableName}?tenant_id=${tenantId}`, {
         signal: controller.signal
@@ -61,13 +61,30 @@ export const RailwayService = {
 
   upsertRecords: async (tableName: string, records: any[], tenantId: string) => {
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 120000);
+
+      // محاولة استخدام إعدادات أكثر مرونة لتجنب مشاكل CORS مع بعض المتصفحات
       const response = await fetch(`${API_URL}/api/upsert/${tableName}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ records, tenant_id: tenantId })
+        mode: 'cors', // التأكيد على وضع CORS
+        headers: { 
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({ records, tenant_id: tenantId }),
+        signal: controller.signal
       });
+      clearTimeout(timeoutId);
+      
+      if (!response.ok) {
+         const errorText = await response.text();
+         throw new Error(`Server responded with ${response.status}: ${errorText}`);
+      }
+      
       return await response.json();
     } catch (error: any) {
+      console.error(`[RailwayService] Upsert Error for ${tableName}:`, error.message);
       return { success: false, error: error.message };
     }
   },
@@ -98,10 +115,15 @@ export const RailwayService = {
     }
   },
 
-  wipeAllTenantData: async (tenantId: string) => {
+  upsertTenantSettings: async (tenantId: string, settings: any) => {
     try {
-      const response = await fetch(`${API_URL}/api/wipe/${tenantId}`, {
-        method: 'DELETE'
+      const response = await fetch(`${API_URL}/api/upsert/tenant_settings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          records: [settings], 
+          tenant_id: tenantId 
+        })
       });
       return await response.json();
     } catch (error: any) {
@@ -109,12 +131,10 @@ export const RailwayService = {
     }
   },
 
-  upsertTenantSettings: async (tenantId: string, settings: any) => {
+  wipeAllTenantData: async (tenantId: string) => {
     try {
-      const response = await fetch(`${API_URL}/api/upsert/tenant_settings`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ records: [settings], tenant_id: tenantId })
+      const response = await fetch(`${API_URL}/api/wipe/${tenantId}`, {
+        method: 'DELETE'
       });
       return await response.json();
     } catch (error: any) {

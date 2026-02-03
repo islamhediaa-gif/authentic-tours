@@ -7,7 +7,14 @@ export default defineConfig({
   build: {
     outDir: 'vercel_output',
     emptyOutDir: true,
+    cssCodeSplit: true,
+    assetsInlineLimit: 0,
     rollupOptions: {
+      output: {
+        entryFileNames: `assets/[name]-[hash]-v301.js`,
+        chunkFileNames: `assets/[name]-[hash]-v301.js`,
+        assetFileNames: `assets/[name]-[hash]-v301.[ext]`
+      },
       // Only externalize in Electron builds, not Web builds
       external: process.env.ELECTRON === 'true' ? ['electron', 'fs', 'path', 'crypto', 'child_process'] : []
     }

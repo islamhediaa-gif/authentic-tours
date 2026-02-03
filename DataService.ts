@@ -22,7 +22,7 @@ const isElectron = typeof window !== 'undefined' && (
 // إعداد IndexedDB
 const DB_NAME = 'NebrasDB';
 const STORE_NAME = 'enterprise_data';
-const DB_VERSION = 2; // رفع الإصدار لإجبار المتصفح على التحديث
+const DB_VERSION = 6; // رفع الإصدار لتصفير الذاكرة المحلية وإجبار سحب البيانات المصلحة من السحاب
 
 const openDB = (): Promise<IDBDatabase> => {
   return new Promise((resolve, reject) => {
@@ -227,9 +227,10 @@ export const DataService = {
             try {
                 const isOptional = optionalTables.includes(table);
                 const isCritical = criticalTables.includes(table);
-                const timeoutLimit = isCritical ? 12000 : (isOptional ? 3000 : 8000); 
+                const isVeryLarge = table === 'journal_lines' || table === 'transactions' || table === 'journal_entries';
+                const timeoutLimit = isVeryLarge ? 120000 : (isCritical ? 40000 : (isOptional ? 15000 : 60000)); 
                 const tablePromise = getCloudService().fetchTenantData(table, tenantId);
-                const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), timeoutLimit));
+                const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), timeoutLimit + 1000));
                 const res = await Promise.race([tablePromise, timeoutPromise]) as any;
                 results.push(res);
             } catch (err) {
@@ -299,16 +300,10 @@ export const DataService = {
                                  (!localData.transactions?.length && !localData.journalEntries?.length);
 
         if (tenantId === 'authentic' && localData && !isLocalDataEmpty) {
-          // السماح بالتحميل الفوري من الذاكرة المحلية لسرعة التشغيل
-          // مع إرجاع الوعد السحابي لتحديث الإعدادات والبيانات في الخلفية
-          console.log("[DataService] Authentic tenant: Using local cache for instant start...");
-          return { 
-            success: true, 
-            data: localData, 
-            fromCloud: false, 
-            isStale: true, 
-            cloudPromise: cloudDataPromise 
-          };
+          // تم التعطيل المؤقت لإجبار المزامنة مع السحاب بعد تحديث التواريخ
+          console.log("[DataService] Authentic tenant: Waiting for cloud sync to ensure date repairs...");
+          const fullCloudData = await cloudDataPromise;
+          return { success: true, data: fullCloudData, fromCloud: true };
         }
         
         // إجبار نسخة Authentic على انتظار البيانات السحابية إذا كانت المحلية فارغة
@@ -454,7 +449,7 @@ export const DataService = {
       };
 
       try {
-        await syncTable('transactions', data.transactions || [], 50);
+        await syncTable('transactions', data.transactions || [], 25);
         await syncTable('customers', data.customers || []);
         await syncTable('suppliers', data.suppliers || []);
         await syncTable('partners', data.partners || []);
@@ -465,8 +460,8 @@ export const DataService = {
         await syncTable('departments', data.departments || []);
         await syncTable('designations', data.designations || []);
         await syncTable('master_trips', data.masterTrips || []);
-        await syncTable('attendance_logs', data.attendanceLogs || [], 100);
-        await syncTable('audit_logs', data.auditLogs || [], 100);
+        await syncTable('attendance_logs', data.attendanceLogs || [], 50);
+        await syncTable('audit_logs', data.auditLogs || [], 50);
         await syncTable('shifts', data.shifts || []);
         await syncTable('employee_leaves', data.leaves || []);
         await syncTable('employee_allowances', data.allowances || []);
@@ -488,8 +483,8 @@ export const DataService = {
                 }
             });
 
-            await syncTable('journal_entries', data.journalEntries, 50);
-            await syncTable('journal_lines', allLines, 100);
+            await syncTable('journal_entries', data.journalEntries, 25);
+            await syncTable('journal_lines', allLines, 40);
         }
 
         if (data.settings) {

@@ -57,6 +57,19 @@ const EmployeeView: React.FC<EmployeeViewProps> = ({
   const [showDocForm, setShowDocForm] = useState(false);
   const [showOrgForm, setShowOrgForm] = useState(false);
   const [showCommissionForm, setShowCommissionForm] = useState(false);
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [paymentFormData, setPaymentFormData] = useState({
+    employeeId: '',
+    paySalary: true,
+    payCommission: true,
+    salaryAmount: 0,
+    commissionAmount: 0,
+    allowances: 0,
+    advances: 0,
+    deductions: 0,
+    treasuryId: '',
+    date: new Date().toISOString().split('T')[0]
+  });
   const [activeTab, setActiveTab] = useState<'INFO' | 'FINANCE' | 'LEAVES' | 'DOCS'>('INFO');
 
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -310,6 +323,21 @@ const EmployeeView: React.FC<EmployeeViewProps> = ({
     const employeeTx = (transactions || []).filter(t => t && t.employeeId === employeeId && !t.isVoided);
     const employee = (employees || []).find(e => e && e.id === employeeId);
     
+    // Pro-rated salary calculation if joined this month
+    let basicSalary = employee?.basicSalary || 0;
+    if (employee?.joiningDate) {
+      const joinDate = new Date(employee.joiningDate);
+      const now = new Date();
+      // If joined in the same month and year as "now"
+      if (joinDate.getMonth() === now.getMonth() && joinDate.getFullYear() === now.getFullYear()) {
+        const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+        const workingDays = daysInMonth - joinDate.getDate() + 1;
+        if (workingDays < daysInMonth && workingDays > 0) {
+           basicSalary = (basicSalary / daysInMonth) * workingDays;
+        }
+      }
+    }
+
     // حساب الأرباح لكل عملية
     let totalProfit = 0;
 
@@ -356,7 +384,8 @@ const EmployeeView: React.FC<EmployeeViewProps> = ({
       advances: empAdvances,
       attendanceDeductions,
       allowances: totalAllowances,
-      totalPayable: (employee?.basicSalary || 0) + empCommissions + totalAllowances - empAdvances - attendanceDeductions
+      totalPayable: basicSalary + empCommissions + totalAllowances - empAdvances - attendanceDeductions,
+      actualBasicSalary: basicSalary // Returning the calculated salary
     };
   };
 
@@ -365,15 +394,29 @@ const EmployeeView: React.FC<EmployeeViewProps> = ({
     if (!emp) return;
     const stats = getEmployeeStats(employeeId);
     
-    const displayTotal = isHidden ? '****' : (stats.totalPayable + stats.advances + stats.attendanceDeductions - stats.allowances).toLocaleString();
-    const displayAllowances = isHidden ? '****' : stats.allowances.toLocaleString();
-    const displayAdvances = isHidden ? '****' : stats.advances.toLocaleString();
-    const displayDeductions = isHidden ? '****' : stats.attendanceDeductions.toLocaleString();
-    const displayNet = isHidden ? '****' : stats.totalPayable.toLocaleString();
+    setPaymentFormData({
+      employeeId,
+      paySalary: true,
+      payCommission: true,
+      salaryAmount: stats.actualBasicSalary,
+      commissionAmount: stats.commission,
+      allowances: stats.allowances,
+      advances: stats.advances,
+      deductions: stats.attendanceDeductions,
+      treasuryId: (treasuries || [])[0]?.id || '',
+      date: new Date().toISOString().split('T')[0]
+    });
+    setShowPaymentModal(true);
+  };
 
-    if (confirm(`هل أنت متأكد من صرف راتب ${emp.name}؟\nإجمالي المستحق (راتب+عمولة): ${displayTotal}\nبدلات إضافية: ${displayAllowances}\nخصم سلف: ${displayAdvances}\nخصم تأخيرات بصمة: ${displayDeductions}\nالصافي للصرف: ${displayNet}`)) {
-      // أ. صرف الراتب الأساسي والبدلات (كمصروف رواتب)
-      const salaryPart = (emp.basicSalary || 0) + stats.allowances - stats.attendanceDeductions;
+  const submitPayment = (e: React.FormEvent) => {
+    e.preventDefault();
+    const emp = (employees || []).find(e => e && e.id === paymentFormData.employeeId);
+    if (!emp) return;
+
+    // 1. Pay Salary Part
+    if (paymentFormData.paySalary) {
+      const salaryPart = paymentFormData.salaryAmount + paymentFormData.allowances - paymentFormData.deductions;
       if (salaryPart > 0) {
         addTransaction({
           description: `صرف راتب شهر: ${emp.name}`,
@@ -382,42 +425,45 @@ const EmployeeView: React.FC<EmployeeViewProps> = ({
           type: 'EXPENSE',
           category: 'EXPENSE_GEN',
           expenseCategory: 'رواتب وأجور',
-          date: new Date().toISOString().split('T')[0],
-          treasuryId: (treasuries || [])[0]?.id || '',
+          date: paymentFormData.date,
+          treasuryId: paymentFormData.treasuryId,
           relatedEntityId: emp.id,
           relatedEntityType: 'EMPLOYEE'
         });
       }
-
-      // ب. صرف العمولات (كتسوية للالتزام LIABILITY لأنها سُجلت كمصروف عند البيع)
-      if (stats.commission > 0) {
-        addTransaction({
-          description: `صرف عمولات مستحقة: ${emp.name}`,
-          amount: stats.commission,
-          amountInBase: stats.commission,
-          type: 'EXPENSE',
-          category: 'CASH',
-          date: new Date().toISOString().split('T')[0],
-          treasuryId: (treasuries || [])[0]?.id || '',
-          relatedEntityId: emp.id,
-          relatedEntityType: 'EMPLOYEE'
-        });
-      }
-
-      // ج. تسوية السلف (إذا وجدت)
-      if (stats.advances > 0) {
+      
+      // Clear Advances if paying salary
+      if (paymentFormData.advances > 0) {
         addTransaction({
           description: `تسوية سلف موظف عند صرف الراتب: ${emp.name}`,
-          amount: stats.advances,
-          amountInBase: stats.advances,
+          amount: paymentFormData.advances,
+          amountInBase: paymentFormData.advances,
           type: 'ADVANCE_DEDUCTION',
           category: 'EMPLOYEE_ADVANCE',
-          date: new Date().toISOString().split('T')[0],
+          date: paymentFormData.date,
           relatedEntityId: emp.id,
           relatedEntityType: 'EMPLOYEE'
         });
       }
     }
+
+    // 2. Pay Commission Part
+    if (paymentFormData.payCommission && paymentFormData.commissionAmount > 0) {
+      addTransaction({
+        description: `صرف عمولات مستحقة: ${emp.name}`,
+        amount: paymentFormData.commissionAmount,
+        amountInBase: paymentFormData.commissionAmount,
+        type: 'EXPENSE',
+        category: 'CASH',
+        date: paymentFormData.date,
+        treasuryId: paymentFormData.treasuryId,
+        relatedEntityId: emp.id,
+        relatedEntityType: 'EMPLOYEE'
+      });
+    }
+
+    addAuditLog('CREATE', 'TRANSACTION', Date.now().toString(), `صرف مستحقات للموظف: ${emp.name}`);
+    setShowPaymentModal(false);
   };
 
   const handleLeaveSubmit = (e: any) => {
@@ -1342,7 +1388,7 @@ const EmployeeView: React.FC<EmployeeViewProps> = ({
             {/* Footer */}
             <div className="p-8 bg-slate-50 border-t border-slate-200 flex justify-between items-center shrink-0">
                <div className="text-xs font-bold text-slate-400 uppercase tracking-widest">
-                  نظام نِـبـراس ERP - وحدة الموارد البشرية المتكاملة
+                  نظام نِـبـراس ERP - إصدار v3.0.1 (قيد المزامنة السحابية)
                </div>
                <button 
                  onClick={() => window.print()}
@@ -1351,6 +1397,146 @@ const EmployeeView: React.FC<EmployeeViewProps> = ({
                  <FileText size={20} /> تصدير التقرير PDF
                </button>
             </div>
+          </div>
+        </div>
+      )}
+      {showPaymentModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4 no-print animate-in fade-in duration-300">
+          <div className="bg-white w-full max-w-2xl rounded-[32px] shadow-2xl overflow-hidden border border-slate-200 animate-in zoom-in-95 duration-300">
+            <div className="p-8 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 bg-indigo-600 text-white rounded-2xl flex items-center justify-center shadow-lg shadow-indigo-200">
+                  <DollarSign size={24} />
+                </div>
+                <div>
+                  <h3 className="text-xl font-bold text-slate-900">صرف مستحقات الموظف</h3>
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">
+                    {(employees || []).find(e => e.id === paymentFormData.employeeId)?.name}
+                  </p>
+                </div>
+              </div>
+              <button onClick={() => setShowPaymentModal(false)} className="text-slate-400 hover:text-rose-500 transition-all p-2 bg-white rounded-xl shadow-sm border border-slate-100">
+                <X size={20} />
+              </button>
+            </div>
+            
+            <form onSubmit={submitPayment} className="p-8 space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Options */}
+                <div className="space-y-4 bg-slate-50 p-6 rounded-3xl border border-slate-100">
+                  <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">بنود الصرف</h4>
+                  
+                  <label className="flex items-center gap-3 cursor-pointer group">
+                    <input 
+                      type="checkbox" 
+                      className="w-5 h-5 rounded-lg border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                      checked={paymentFormData.paySalary}
+                      onChange={(e) => setPaymentFormData({...paymentFormData, paySalary: e.target.checked})}
+                    />
+                    <span className="text-sm font-bold text-slate-700 group-hover:text-indigo-600 transition-colors">صرف الراتب والبدلات</span>
+                  </label>
+
+                  <label className="flex items-center gap-3 cursor-pointer group">
+                    <input 
+                      type="checkbox" 
+                      className="w-5 h-5 rounded-lg border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                      checked={paymentFormData.payCommission}
+                      onChange={(e) => setPaymentFormData({...paymentFormData, payCommission: e.target.checked})}
+                    />
+                    <span className="text-sm font-bold text-slate-700 group-hover:text-indigo-600 transition-colors">صرف العمولات المستحقة</span>
+                  </label>
+                </div>
+
+                {/* Date and Treasury */}
+                <div className="space-y-4">
+                  <div className="flex flex-col gap-2">
+                    <label className="text-[10px] font-bold uppercase tracking-widest text-slate-400 ml-1">تاريخ الصرف</label>
+                    <input 
+                      type="date" 
+                      required 
+                      className="p-3 bg-white border border-slate-200 rounded-xl focus:border-indigo-600 outline-none font-bold text-sm shadow-sm"
+                      value={paymentFormData.date}
+                      onChange={(e) => setPaymentFormData({...paymentFormData, date: e.target.value})}
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-2">
+                    <label className="text-[10px] font-bold uppercase tracking-widest text-slate-400 ml-1">الصرف من</label>
+                    <select 
+                      className="p-3 bg-white border border-slate-200 rounded-xl focus:border-indigo-600 outline-none font-bold text-sm shadow-sm"
+                      value={paymentFormData.treasuryId}
+                      onChange={(e) => setPaymentFormData({...paymentFormData, treasuryId: e.target.value})}
+                      required
+                    >
+                      {(treasuries || []).map(t => (
+                        <option key={t?.id} value={t?.id}>
+                          {t?.type === 'CUSTODY' ? '📦 ' : t?.type === 'BANK' ? '🏦 ' : '💰 '}
+                          {t?.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {/* Summary */}
+              <div className="bg-slate-900 rounded-3xl p-8 text-white space-y-4 shadow-xl">
+                <div className="flex justify-between items-center pb-4 border-b border-slate-800">
+                  <span className="text-slate-400 font-bold">إجمالي الراتب (النسبي):</span>
+                  <span className={`font-bold ${!paymentFormData.paySalary ? 'line-through text-slate-600' : 'text-white'}`}>
+                    {formatCurrency(paymentFormData.salaryAmount)}
+                  </span>
+                </div>
+                {paymentFormData.paySalary && (
+                  <>
+                    <div className="flex justify-between items-center text-sm">
+                      <span className="text-emerald-400">+ البدلات الشهرية:</span>
+                      <span className="font-bold text-emerald-400">{formatCurrency(paymentFormData.allowances)}</span>
+                    </div>
+                    <div className="flex justify-between items-center text-sm">
+                      <span className="text-rose-400">- خصم السلف:</span>
+                      <span className="font-bold text-rose-400">{formatCurrency(paymentFormData.advances)}</span>
+                    </div>
+                    <div className="flex justify-between items-center text-sm">
+                      <span className="text-rose-400">- خصم البصمة:</span>
+                      <span className="font-bold text-rose-400">{formatCurrency(paymentFormData.deductions)}</span>
+                    </div>
+                  </>
+                )}
+                <div className="flex justify-between items-center pt-4 border-t border-slate-800">
+                  <span className="text-slate-400 font-bold">العمولات المستحقة:</span>
+                  <span className={`font-bold ${!paymentFormData.payCommission ? 'line-through text-slate-600' : 'text-white'}`}>
+                    {formatCurrency(paymentFormData.commissionAmount)}
+                  </span>
+                </div>
+                
+                <div className="flex justify-between items-center pt-6 mt-4 border-t-2 border-indigo-500/30">
+                  <span className="text-lg font-bold text-indigo-400 uppercase tracking-widest">الصافي للدفع</span>
+                  <span className="text-3xl font-black text-white">
+                    {formatCurrency(
+                      (paymentFormData.paySalary ? (paymentFormData.salaryAmount + paymentFormData.allowances - paymentFormData.advances - paymentFormData.deductions) : 0) +
+                      (paymentFormData.payCommission ? paymentFormData.commissionAmount : 0)
+                    )}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-4 pt-4">
+                <button 
+                  type="button" 
+                  onClick={() => setShowPaymentModal(false)}
+                  className="px-8 py-3 text-slate-400 font-bold text-sm hover:text-rose-600 transition-colors"
+                >
+                  إلغاء العملية
+                </button>
+                <button 
+                  type="submit"
+                  className="bg-indigo-600 text-white px-12 py-3 rounded-2xl font-bold text-sm hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200 active:scale-95"
+                >
+                  تأكيد وصرف المستحقات
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
