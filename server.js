@@ -127,6 +127,147 @@ app.get('/api/admin/fix-schema', async (req, res) => {
   }
 });
 
+// Super Restore Endpoint - ارفع كل حاجة مرة واحدة
+app.post('/api/admin/super-restore', async (req, res) => {
+  try {
+    const { data, tenant_id } = req.body;
+    if (!data || !tenant_id) throw new Error('Missing data or tenant_id');
+
+    console.log(`🚀 [Super Restore] Starting full wipe and restore for tenant: ${tenant_id}`);
+    
+    // 1. Nuclear Wipe first
+    const tablesToWipe = [
+      'transactions', 'journal_lines', 'journal_entries', 'customers', 
+      'suppliers', 'partners', 'employees', 'treasuries', 'currencies', 
+      'cost_centers', 'departments', 'designations', 'attendance_logs', 
+      'shifts', 'employee_leaves', 'employee_allowances', 
+      'employee_documents', 'audit_logs', 'tenant_settings', 'master_trips', 'users', 'programs'
+    ];
+
+    for (const table of tablesToWipe) {
+      try {
+        const sql = mysqlLib.format(`DELETE FROM ?? WHERE tenant_id = ?`, [table, tenant_id]);
+        await pool.query(sql);
+      } catch (e) {
+        console.warn(`Wipe failed for ${table}: ${e.message}`);
+      }
+    }
+    
+    const tablesMap = {
+      'currencies': 'currencies',
+      'treasuries': 'treasuries',
+      'costCenters': 'cost_centers',
+      'departments': 'departments',
+      'designations': 'designations',
+      'shifts': 'shifts',
+      'employees': 'employees',
+      'customers': 'customers',
+      'suppliers': 'suppliers',
+      'partners': 'partners',
+      'users': 'users',
+      'programs': 'programs',
+      'masterTrips': 'master_trips',
+      'journalEntries': 'journal_entries',
+      'transactions': 'transactions',
+      'auditLogs': 'audit_logs',
+      'settings': 'tenant_settings'
+    };
+
+    const results = {};
+
+    for (const [key, tableName] of Object.entries(tablesMap)) {
+      let records = data[key];
+      if (!records) continue;
+      if (!Array.isArray(records)) records = [records];
+      if (records.length === 0) continue;
+
+      console.log(`📦 [Super Restore] Processing ${records.length} records for ${tableName}...`);
+
+      // Special handling for journal lines if key is journalEntries
+      if (key === 'journalEntries') {
+          const allLines = [];
+          records.forEach((entry, eIdx) => {
+              if (entry.lines && Array.isArray(entry.lines)) {
+                  entry.lines.forEach((line, lIdx) => {
+                      const l = toSnake(line);
+                      l.tenant_id = tenant_id;
+                      l.journal_entry_id = entry.id;
+                      if (!l.id) l.id = `L_${entry.id}_${lIdx}`;
+                      allLines.push(l);
+                  });
+              }
+          });
+          if (allLines.length > 0) {
+              await bulkUpsert('journal_lines', allLines, tenant_id);
+              results['journal_lines'] = allLines.length;
+          }
+      }
+
+      // Prepare records for the table
+      const processed = records.map(r => {
+          const s = toSnake(r);
+          s.tenant_id = tenant_id;
+          if (tableName === 'journal_entries') delete s.lines;
+          
+          // Specific fix for tenant_settings
+          if (tableName === 'tenant_settings') {
+              if (!s.company_name && r.name) s.company_name = r.name;
+              if (r.logo && !s.logo_url) s.logo_url = r.logo;
+          }
+          
+          return s;
+      });
+
+      await bulkUpsert(tableName, processed, tenant_id);
+      results[tableName] = processed.length;
+    }
+
+    res.json({ success: true, results });
+  } catch (error) {
+    console.error(`❌ [Super Restore] Failed:`, error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Internal helper for super-restore
+async function bulkUpsert(table, records, tenant_id) {
+    if (records.length === 0) return;
+    
+    const validColumns = await getTableColumns(table);
+    const sanitized = records.map(r => {
+        if (!validColumns) return r;
+        const filtered = {};
+        for (const col of validColumns) {
+            if (r[col] !== undefined) filtered[col] = r[col];
+        }
+        return filtered;
+    });
+
+    // Chunk even super-restore a bit to avoid max_allowed_packet, but with large chunks
+    const CHUNK_SIZE = 1000;
+    for (let i = 0; i < sanitized.length; i += CHUNK_SIZE) {
+        const chunk = sanitized.slice(i, i + CHUNK_SIZE);
+        const keys = Array.from(new Set(chunk.flatMap(r => Object.keys(r))));
+        const values = [];
+        const placeholders = chunk.map(record => {
+            const row = keys.map(k => {
+                let v = record[k] === undefined ? null : record[k];
+                if (v !== null && typeof v === 'object') v = JSON.stringify(v);
+                values.push(v);
+                return '?';
+            });
+            return `(${row.join(', ')})`;
+        }).join(', ');
+
+        const updates = keys.map(k => mysqlLib.format('?? = VALUES(??)', [k, k])).join(', ');
+        const sql = mysqlLib.format(
+            `INSERT INTO ?? (${keys.map(() => '??').join(', ')}) VALUES ${placeholders} ON DUPLICATE KEY UPDATE ${updates}`,
+            [table, ...keys]
+        );
+        await pool.query(sql, values);
+    }
+}
+
 // Helper for snake_case conversion (simplified)
 const toSnake = (obj) => {
   const snake = {};
@@ -213,6 +354,20 @@ app.post('/api/upsert/:table', async (req, res) => {
     
     const processedRecords = records.map(record => {
       const copy = { ...record };
+      
+      // Fix for tenant_settings missing company_name or mapping logo
+      if (table === 'tenant_settings') {
+        if (!copy.company_name && copy.companyName) {
+          copy.company_name = copy.companyName;
+        }
+        if (!copy.company_name) {
+          copy.company_name = 'Authentic Tours';
+        }
+        if (copy.logo && !copy.logo_url) {
+          copy.logo_url = copy.logo;
+        }
+      }
+
       // Remove lines if it's a journal entry (we sync them separately now)
       if (table === 'journal_entries') {
         delete copy.lines;
@@ -271,15 +426,22 @@ app.post('/api/upsert/:table', async (req, res) => {
       console.log(`[${table}] Bulk synced ${records.length} records`);
     } catch (err) {
       console.error(`Bulk SQL Error for table ${table}:`, err.message);
+      console.error(`First record sample:`, JSON.stringify(processedRecords[0]));
       // Fallback to one-by-one if bulk fails (to identify the problematic row)
       console.log(`Falling back to one-by-one for ${table}...`);
-      for (const record of processedRecords) {
-          const keys = Object.keys(record);
-          const vals = Object.values(record).map(v => (v !== null && typeof v === 'object') ? JSON.stringify(v) : v);
-          const p = keys.map(() => '?').join(', ');
-          const u = keys.map(k => mysqlLib.format('?? = VALUES(??)', [k, k])).join(', ');
-          const s = mysqlLib.format(`INSERT INTO ?? (${keys.map(() => '??').join(', ')}) VALUES (${p}) ON DUPLICATE KEY UPDATE ${u}`, [table, ...keys]);
-          await pool.query(s, vals);
+      for (const [idx, record] of processedRecords.entries()) {
+          try {
+            const keys = Object.keys(record);
+            const vals = Object.values(record).map(v => (v !== null && typeof v === 'object') ? JSON.stringify(v) : v);
+            const p = keys.map(() => '?').join(', ');
+            const u = keys.map(k => mysqlLib.format('?? = VALUES(??)', [k, k])).join(', ');
+            const s = mysqlLib.format(`INSERT INTO ?? (${keys.map(() => '??').join(', ')}) VALUES (${p}) ON DUPLICATE KEY UPDATE ${u}`, [table, ...keys]);
+            await pool.query(s, vals);
+          } catch (rowErr) {
+            console.error(`Row ${idx} failed for ${table}:`, rowErr.message);
+            console.error(`Record data:`, JSON.stringify(record));
+            throw rowErr; // Re-throw to fail the request
+          }
       }
     }
     
@@ -323,21 +485,36 @@ app.get('/api/backup/load/:userId', async (req, res) => {
 app.get('/api/dashboard/summary', async (req, res) => {
   try {
     const { tenant_id } = req.query;
-    // استعلام سريع لجلب ملخص الأرقام مباشرة من قاعدة البيانات
-    const [cashRows] = await pool.query(`
-      SELECT SUM(debit - credit) as total_cash 
-      FROM treasury_lines 
+    
+    // 1. Get Opening Balances Sums
+    const [tOpen] = await pool.query('SELECT SUM(opening_balance * exchange_rate) as open_cash FROM treasuries WHERE tenant_id = ?', [tenant_id]);
+    const [cOpen] = await pool.query('SELECT SUM(opening_balance_in_base) as open_cust FROM customers WHERE tenant_id = ?', [tenant_id]);
+    const [sOpen] = await pool.query('SELECT SUM(opening_balance_in_base) as open_supp FROM suppliers WHERE tenant_id = ?', [tenant_id]);
+
+    // 2. Get Transaction Sums from Journal Lines
+    const [journalStats] = await pool.query(`
+      SELECT 
+        SUM(CASE WHEN account_type IN ('TREASURY', 'BANK') THEN (debit - credit) ELSE 0 END) as net_cash,
+        SUM(CASE WHEN account_type = 'CUSTOMER' THEN (debit - credit) ELSE 0 END) as net_customers,
+        SUM(CASE WHEN account_type = 'SUPPLIER' THEN (credit - debit) ELSE 0 END) as net_suppliers,
+        SUM(CASE WHEN account_type = 'REVENUE' THEN (credit - debit) ELSE 0 END) as net_revenue
+      FROM journal_lines 
       WHERE tenant_id = ?`, [tenant_id]);
       
+    // Fix: check if journalStats[0] exists
+    const stats = journalStats && journalStats[0] ? journalStats[0] : {};
+    
     res.json({ 
       success: true, 
       data: {
-        total_cash: cashRows[0]?.total_cash || 0,
-        customer_debts: 0, // يمكن توسيعه لاحقاً
-        supplier_credits: 0
+        total_cash: (Number(tOpen[0]?.open_cash) || 0) + (Number(stats.net_cash) || 0),
+        customer_debts: (Number(cOpen[0]?.open_cust) || 0) + (Number(stats.net_customers) || 0),
+        supplier_credits: (Number(sOpen[0]?.open_supp) || 0) + (Number(stats.net_suppliers) || 0),
+        total_revenue: Number(stats.net_revenue) || 0
       } 
     });
   } catch (error) {
+    console.error('[Summary Error]:', error.message);
     res.status(500).json({ success: false, error: error.message });
   }
 });
