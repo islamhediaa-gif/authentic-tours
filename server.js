@@ -191,7 +191,12 @@ app.post('/api/admin/super-restore', async (req, res) => {
                   entry.lines.forEach((line, lIdx) => {
                       const l = toSnake(line);
                       l.tenant_id = tenant_id;
-                      l.journal_entry_id = entry.id;
+                      l.journal_entry_id = entry.id; // Preserve Entry ID
+                      
+                      // Also preserve Trip/Program from parent entry if not on line
+                      if (!l.trip_id && entry.tripId) l.trip_id = entry.tripId;
+                      if (!l.program_id && entry.programId) l.program_id = entry.programId;
+                      
                       if (!l.id) l.id = `L_${entry.id}_${lIdx}`;
                       allLines.push(l);
                   });
@@ -200,6 +205,31 @@ app.post('/api/admin/super-restore', async (req, res) => {
           if (allLines.length > 0) {
               await bulkUpsert('journal_lines', allLines, tenant_id);
               results['journal_lines'] = allLines.length;
+          }
+      }
+
+      // Special handling for transactions to extract journal lines if they exist there too
+      if (key === 'transactions') {
+          const allLines = [];
+          records.forEach((tx, tIdx) => {
+              if (tx.journalLines && Array.isArray(tx.journalLines)) {
+                  tx.journalLines.forEach((line, lIdx) => {
+                      const l = toSnake(line);
+                      l.tenant_id = tenant_id;
+                      l.transaction_id = tx.id; // Link to Transaction
+                      
+                      // Inherit trip/program from tx
+                      if (!l.trip_id && tx.tripId) l.trip_id = tx.tripId;
+                      if (!l.program_id && tx.programId) l.program_id = tx.programId;
+                      
+                      if (!l.id) l.id = `TX_L_${tx.id}_${lIdx}`;
+                      allLines.push(l);
+                  });
+              }
+          });
+          if (allLines.length > 0) {
+              await bulkUpsert('journal_lines', allLines, tenant_id);
+              results['journal_lines_from_tx'] = allLines.length;
           }
       }
 
@@ -270,9 +300,18 @@ async function bulkUpsert(table, records, tenant_id) {
 
 // Helper for snake_case conversion (simplified)
 const toSnake = (obj) => {
+  if (obj === null || typeof obj !== 'object') return obj;
   const snake = {};
   for (const key in obj) {
-    const snakeKey = key.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
+    let snakeKey = key.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
+    
+    // Explicit mapping for common relational IDs
+    if (key === 'tripId') snakeKey = 'trip_id';
+    if (key === 'programId') snakeKey = 'program_id';
+    if (key === 'journalEntryId') snakeKey = 'journal_entry_id';
+    if (key === 'costCenterId') snakeKey = 'cost_center_id';
+    if (key === 'tenantId') snakeKey = 'tenant_id';
+
     let value = obj[key];
     
     // Convert ISO date strings to MySQL format
