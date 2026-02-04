@@ -536,7 +536,7 @@ app.get('/api/dashboard/summary', async (req, res) => {
         SUM(CASE WHEN account_type IN ('TREASURY', 'BANK') THEN (debit - credit) ELSE 0 END) as net_cash,
         SUM(CASE WHEN account_type = 'CUSTOMER' THEN (debit - credit) ELSE 0 END) as net_customers,
         SUM(CASE WHEN account_type = 'SUPPLIER' THEN (credit - debit) ELSE 0 END) as net_suppliers,
-        SUM(CASE WHEN account_type = 'REVENUE' THEN (credit - debit) ELSE 0 END) as net_revenue
+        SUM(CASE WHEN account_type = 'REVENUE' THEN (credit - debit) WHEN account_type = 'INCOME' THEN (credit - debit) ELSE 0 END) as net_revenue
       FROM journal_lines 
       WHERE tenant_id = ?`, [tenant_id]);
       

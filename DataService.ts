@@ -22,7 +22,7 @@ const isElectron = typeof window !== 'undefined' && (
 // إعداد IndexedDB
 const DB_NAME = 'NebrasDB';
 const STORE_NAME = 'enterprise_data';
-const DB_VERSION = 6; // رفع الإصدار لتصفير الذاكرة المحلية وإجبار سحب البيانات المصلحة من السحاب
+const DB_VERSION = 10; // رفع الإصدار لتصفير الذاكرة المحلية وإجبار سحب البيانات المصلحة من السحاب
 
 const openDB = (): Promise<IDBDatabase> => {
   return new Promise((resolve, reject) => {
@@ -45,23 +45,33 @@ const getTenantId = () => {
   let client = params.get('client');
   
   // التحقق من اسم الشركة المختار
-  const validateTenant = (id: string) => {
-    return id.toLowerCase();
+  const validateTenant = (id: any): string => {
+    if (!id || typeof id !== 'string') return 'authentic';
+    const cleanId = id.trim().toLowerCase();
+    if (cleanId === 'null' || cleanId === 'undefined' || cleanId === '') return 'authentic';
+    return cleanId;
   };
 
   if (client) {
     const mapped = validateTenant(client);
-    localStorage.setItem('nebras_tenant_id', mapped);
+    try {
+      localStorage.setItem('nebras_tenant_id', mapped);
+    } catch (e) {}
     return mapped;
   }
   
-  const saved = localStorage.getItem('nebras_tenant_id') || 'authentic';
+  let saved = 'authentic';
+  try {
+    saved = localStorage.getItem('nebras_tenant_id') || 'authentic';
+  } catch (e) {}
+  
   return validateTenant(saved);
 };
 
 const getClientName = () => {
   const tenantId = getTenantId();
   if (tenantId === 'authentic' || tenantId === 'server') return 'نِـبـراس ERP';
+  if (!tenantId || typeof tenantId !== 'string') return 'نِـبـراس ERP';
   return tenantId.charAt(0).toUpperCase() + tenantId.slice(1);
 };
 
@@ -145,13 +155,12 @@ export const DataService = {
             const localDate = localRes.data?.lastUpdated ? new Date(localRes.data.lastUpdated).getTime() : 0;
             const cloudDate = cloudRes.data.lastUpdated ? new Date(cloudRes.data.lastUpdated).getTime() : 0;
 
-            if (cloudDate >= localDate || tenantId === 'authentic') {
+            if (cloudDate >= localDate) {
               // إضافة حماية إضافية: لو الداتا السحابية حجمها أصغر بكتير من المحلية، لا تستبدلها
-              // EXCEPT for authentic where we just did a reset
               const localTxCount = localRes.data?.transactions?.length || 0;
               const cloudTxCount = cloudRes.data?.transactions?.length || 0;
               
-              if (tenantId !== 'authentic' && cloudTxCount < localTxCount * 0.5 && localTxCount > 10) {
+              if (cloudTxCount < localTxCount * 0.5 && localTxCount > 10) {
                 console.warn(`[DataService] Cloud data looks suspiciously smaller than local (${cloudTxCount} vs ${localTxCount}). Keeping local.`);
                 return localRes;
               }
@@ -175,15 +184,7 @@ export const DataService = {
     // Fallback or Web mode
     console.log(`[DataService] Attempting to load for ${tenantId}...`);
     
-    // محاولة جلب نسخة سحابية أولاً للمقارنة (Web Mode)
-    let cloudRes: any = { success: false };
-    try {
-      cloudRes = await getCloudService().loadFullBackup(tenantId);
-    } catch (err) {
-      console.warn("[DataService] Cloud fetch failed:", err);
-    }
-
-    // محاولة التحميل من IndexedDB أولاً للمقارنة
+    // 1. محاولة التحميل من IndexedDB أولاً للسرعة القصوى (Stale Data)
     let localData: any = null;
     try {
       const db = await openDB();
@@ -213,32 +214,50 @@ export const DataService = {
       console.warn("[DataService] IndexedDB read failed:", e);
     }
 
+    // 2. محاولة جلب نسخة سحابية في الخلفية للمقارنة (Web Mode)
+    let cloudRes: any = { success: false };
+    const fetchCloudBackup = async () => {
+      try {
+        return await getCloudService().loadFullBackup(tenantId);
+      } catch (err) {
+        console.warn("[DataService] Cloud fetch failed:", err);
+        return { success: false };
+      }
+    };
+
     const loadRelationalAndReturn = async () => {
       try {
-        console.log(`[DataService] Loading all relational data for ${tenantId}...`);
+        // جلب النسخة الاحتياطية السريعة أولاً لتكون أساساً للبيانات
+        cloudRes = await fetchCloudBackup();
+        
+        console.log(`[DataService] Loading all relational data for ${tenantId} in parallel...`);
         const criticalTables = ['tenant_settings', 'users', 'currencies'];
         const essentialTables = ['customers', 'suppliers', 'transactions', 'journal_entries', 'journal_lines', 'treasuries', 'programs'];
         const optionalTables = ['partners', 'employees', 'cost_centers', 'departments', 'designations', 'attendance_logs', 'shifts', 'employee_leaves', 'employee_allowances', 'employee_documents', 'audit_logs', 'master_trips'];
 
-        const results = [];
         const allTables = [...criticalTables, ...essentialTables, ...optionalTables];
         
-        for (const table of allTables) {
+        // Parallel fetching
+        const fetchPromises = allTables.map(async (table) => {
             try {
                 const isOptional = optionalTables.includes(table);
                 const isCritical = criticalTables.includes(table);
                 const isVeryLarge = table === 'journal_lines' || table === 'transactions' || table === 'journal_entries';
-                const timeoutLimit = isVeryLarge ? 120000 : (isCritical ? 40000 : (isOptional ? 15000 : 60000)); 
+                const timeoutLimit = isVeryLarge ? 40000 : (isCritical ? 15000 : (isOptional ? 10000 : 15000)); 
+                
                 const tablePromise = getCloudService().fetchTenantData(table, tenantId);
-                const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), timeoutLimit + 1000));
-                const res = await Promise.race([tablePromise, timeoutPromise]) as any;
-                results.push(res);
+                const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error(`Timeout fetching ${table}`)), timeoutLimit + 1000));
+                
+                return await Promise.race([tablePromise, timeoutPromise]) as any;
             } catch (err) {
-                results.push({ success: false, error: 'Timeout' });
+                console.error(`[DataService] Error fetching ${table}:`, err);
+                return { success: false, error: 'Timeout' };
             }
-        }
+        });
 
-        const mergedData: CompanyData = { ...cloudRes.data };
+        const results = await Promise.all(fetchPromises);
+
+        const mergedData: CompanyData = { ...(cloudRes.data || {}) };
         let hasRealCloudData = false;
 
         results.forEach((res, index) => {
@@ -259,14 +278,44 @@ export const DataService = {
                 let mappedData = res.data;
                 if (Array.isArray(mappedData)) {
                     if (mappedData.length > 0) hasRealCloudData = true;
-                    mappedData = mappedData.map((item: any) => mapKeysToCamel(item));
+                    mappedData = mappedData.filter(Boolean).map((item: any) => {
+                        const cammled = mapKeysToCamel(item);
+                        // Fix for tenant_settings mapping to CompanySettings type
+                        if (tableName === 'tenant_settings') {
+                            return {
+                                ...cammled,
+                                name: cammled?.companyName || cammled?.name || 'نِـبـراس ERP',
+                                logo: cammled?.logoUrl || cammled?.logo || ''
+                            };
+                        }
+                        return cammled;
+                    });
                 }
-                if (tableName === 'journal_entries') (mergedData as any).journalEntries = mappedData;
-                else if (tableName === 'journal_lines') (mergedData as any)._allJournalLines = mappedData;
-                else if (tableName === 'tenant_settings') (mergedData as any)[fieldName] = mappedData && mappedData.length > 0 ? mappedData[0] : (cloudRes.data.settings || {});
-                else (mergedData as any)[fieldName] = mappedData;
-            } else if (!(mergedData as any)[fieldName]) {
-                (mergedData as any)[fieldName] = fieldName === 'settings' ? {} : [];
+                
+                // Nuclear fix for authentic: Do NOT merge with old local data if cloud data exists
+                if (tenantId === 'authentic') {
+                    (mergedData as any)[fieldName] = (tableName === 'tenant_settings') 
+                        ? (mappedData && mappedData.length > 0 ? mappedData[0] : {})
+                        : mappedData;
+                    if (tableName === 'journal_lines') (mergedData as any)._allJournalLines = mappedData;
+                } else {
+                    // Original merge logic for other tenants
+                    if (tableName === 'journal_entries') (mergedData as any).journalEntries = mappedData;
+                    else if (tableName === 'journal_lines') (mergedData as any)._allJournalLines = mappedData;
+                    else if (tableName === 'tenant_settings') (mergedData as any)[fieldName] = mappedData && mappedData.length > 0 ? mappedData[0] : (mergedData.settings || {});
+                    else (mergedData as any)[fieldName] = mappedData;
+                }
+            } else {
+                // حماية: إذا فشل جلب جدول معين من السحاب، نحتفظ بالبيانات المحلية لهذا الجدول ولا نمسحها
+                console.warn(`[DataService] Cloud fetch failed for ${tableName}, preserving local data if available.`);
+                if (localData && localData[fieldName]) {
+                    (mergedData as any)[fieldName] = localData[fieldName];
+                    if (tableName === 'journal_lines' && localData._allJournalLines) {
+                        (mergedData as any)._allJournalLines = localData._allJournalLines;
+                    }
+                } else if (!(mergedData as any)[fieldName]) {
+                    (mergedData as any)[fieldName] = fieldName === 'settings' ? {} : [];
+                }
             }
         });
 
@@ -276,14 +325,19 @@ export const DataService = {
             return localData;
         }
 
-        if ((mergedData as any).journalEntries) {
+        if ((mergedData as any).journalEntries && Array.isArray((mergedData as any).journalEntries)) {
             const allLines = (mergedData as any)._allJournalLines || [];
             (mergedData as any).journalEntries = (mergedData as any).journalEntries.map((entry: any) => {
-                const entryLines = (entry.lines && entry.lines.length > 0) ? entry.lines : allLines.filter((l: any) => l.journalEntryId === entry.id);
+                const entryLines = (entry.lines && entry.lines.length > 0) ? entry.lines : (Array.isArray(allLines) ? allLines.filter((l: any) => l.journalEntryId === entry.id) : []);
                 return { ...entry, lines: entryLines };
             });
             delete (mergedData as any)._allJournalLines;
         }
+        
+        if (hasRealCloudData) {
+            mergedData.lastUpdated = new Date().toISOString();
+        }
+        
         return mergedData;
       } catch (e) {
         console.error("Relational load failed", e);
@@ -291,47 +345,22 @@ export const DataService = {
       }
     };
 
-      if (cloudRes.success && cloudRes.data) {
-        // تشغيل عملية جلب البيانات التفصيلية في الخلفية كـ Promise
+    // Stale-While-Revalidate: Return local data immediately but refresh from cloud in background
+    if (localData && tenantId !== 'authentic') {
+        console.log(`[DataService] Returning local data for ${tenantId} as stale while revalidating...`);
         const cloudDataPromise = loadRelationalAndReturn();
-
-        // حماية إضافية: لو الداتا المحلية فارغة تماماً (أصفار)، لا ترجعها فوراً وانتظر السحاب
-        const isLocalDataEmpty = !localData || 
-                                 (!localData.transactions?.length && !localData.journalEntries?.length);
-
-        if (tenantId === 'authentic' && localData && !isLocalDataEmpty) {
-          // تم التعطيل المؤقت لإجبار المزامنة مع السحاب بعد تحديث التواريخ
-          console.log("[DataService] Authentic tenant: Waiting for cloud sync to ensure date repairs...");
-          const fullCloudData = await cloudDataPromise;
-          return { success: true, data: fullCloudData, fromCloud: true };
-        }
-        
-        // إجبار نسخة Authentic على انتظار البيانات السحابية إذا كانت المحلية فارغة
-        if (tenantId === 'authentic' && isLocalDataEmpty) {
-          console.log("[DataService] Authentic local data is empty, MUST wait for cloud data...");
-          const fullCloudData = await cloudDataPromise;
-          return { success: true, data: fullCloudData, fromCloud: true };
-        }
-
-        console.log("[DataService] Local data empty or not Authentic, waiting for cloud fetch...");
-        const fullCloudData = await cloudDataPromise;
-        if (cloudRes) cloudRes.data = fullCloudData;
-        return { success: true, data: fullCloudData, fromCloud: true };
-      }
-    
-    if (localData) {
-      console.log(`[DataService] Cloud load failed or empty, using local data`);
-      return { success: true, data: localData };
-    }
-    
-    // إذا وصلنا هنا وفشل كل شيء لنسخة Authentic، نحاول محاولة أخيرة لجلب أي بيانات
-    if (tenantId === 'authentic') {
-       console.log("[DataService] Final attempt for Authentic data...");
-       const finalData = await loadRelationalAndReturn();
-       if (finalData) return { success: true, data: finalData, fromCloud: true };
+        return { 
+          success: true, 
+          data: localData, 
+          isStale: true, 
+          cloudPromise: cloudDataPromise 
+        };
     }
 
-    return { success: false, error: 'No data found' };
+    // No local data OR authentic tenant: Must wait for cloud to ensure latest version
+    console.log(`[DataService] Fetching latest cloud data for ${tenantId}...`);
+    const fullCloudData = await loadRelationalAndReturn();
+    return { success: true, data: fullCloudData, fromCloud: true };
   },
 
   saveData: async (data: CompanyData, sessionId?: string, onlyLocal = false, force = false) => {
@@ -459,6 +488,7 @@ export const DataService = {
         await syncTable('cost_centers', data.costCenters || []);
         await syncTable('departments', data.departments || []);
         await syncTable('designations', data.designations || []);
+        await syncTable('users', data.users || []);
         await syncTable('master_trips', data.masterTrips || []);
         await syncTable('attendance_logs', data.attendanceLogs || [], 50);
         await syncTable('audit_logs', data.auditLogs || [], 50);
