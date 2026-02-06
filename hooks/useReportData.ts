@@ -255,61 +255,66 @@ export const useTrialBalance = (
         const types = jeToTxTypes.get(entry.id) || new Set(['NORMAL']);
         const isPurchaseOnly = types.has('PURCHASE_ONLY');
         const isRevenueOnly = types.has('REVENUE_ONLY');
-        const programId = jeToProgramId.get(entry.id);
         
-        let categoryHint = '';
-        if (!isPurchaseOnly && !isRevenueOnly) {
-           const hasFlightCost = (entry.lines || []).some(l => l.accountId === 'FLIGHT_COST');
-           const hasUmrahCost = (entry.lines || []).some(l => l.accountId === 'HAJJ_UMRAH_COST');
-           if (hasFlightCost) categoryHint = 'FLIGHT';
-           else if (hasUmrahCost) categoryHint = 'HAJJ_UMRAH';
-        }
-
         (entry.lines || []).forEach(line => {
-          const key = `${line.accountType}-${line.accountId}`;
-          if (!balances[key]) {
-            balances[key] = { 
-              id: line.accountId, 
-              name: line.accountName || line.accountId, 
-              type: line.accountType, 
-              debit: 0, 
-              credit: 0,
-              periodDebit: 0,
-              periodCredit: 0,
-              balanceInAccountCurrency: 0
-            };
-          }
-          
-          balances[key].debit += Number(line.debit || 0);
-          balances[key].credit += Number(line.credit || 0);
-
-          const entity = line.accountType === 'CUSTOMER' ? customers.find(c => c.id === line.accountId) :
-                         line.accountType === 'SUPPLIER' ? suppliers.find(s => s.id === line.accountId) :
-                         line.accountType === 'PARTNER' ? partners.find(p => p.id === line.accountId) :
-                         (line.accountType === 'LIABILITY' || line.accountType === 'EMPLOYEE_ADVANCE') ? employees.find(e => e.id === line.accountId) :
-                         line.accountType === 'TREASURY' ? treasuries.find(t => t.id === line.accountId) : null;
-          
-          if (entity) {
-             const accountCurrency = (entity as any).openingBalanceCurrency || 'EGP';
-             const accountRate = getEffectiveRate(entity, accountCurrency, currencies);
-             const amount = (line.currencyCode === accountCurrency && line.originalAmount) 
-               ? (Number(line.debit) > 0 ? Math.abs(Number(line.originalAmount)) : -Math.abs(Number(line.originalAmount))) 
-               : (Number(line.debit || 0) - Number(line.credit || 0)) / accountRate;
-             
-             if (['CUSTOMER', 'TREASURY', 'EMPLOYEE_ADVANCE', 'ASSET'].includes(line.accountType)) {
-               balances[key].balanceInAccountCurrency += amount;
-             } else {
-               balances[key].balanceInAccountCurrency -= amount;
-             }
-          }
-
-          if (entry.date >= fromDate) {
-            balances[key].periodDebit += Number(line.debit || 0);
-            balances[key].periodCredit += Number(line.credit || 0);
-          }
+          processLine(line, entry.date);
         });
       }
     });
+
+    // Also process lines from transactions that are NOT linked to a journal entry
+    // (to avoid double counting, though usually they are exclusive in the DB structure)
+    (transactions || []).forEach(tx => {
+      if (tx.date <= toDate && !tx.isVoided) {
+        (tx.lines || []).forEach(line => {
+          processLine(line, tx.date);
+        });
+      }
+    });
+
+    function processLine(line: any, date: string) {
+      const key = `${line.accountType}-${line.accountId}`;
+      if (!balances[key]) {
+        balances[key] = { 
+          id: line.accountId, 
+          name: line.accountName || line.accountId, 
+          type: line.accountType, 
+          debit: 0, 
+          credit: 0,
+          periodDebit: 0,
+          periodCredit: 0,
+          balanceInAccountCurrency: 0
+        };
+      }
+      
+      balances[key].debit += Number(line.debit || 0);
+      balances[key].credit += Number(line.credit || 0);
+
+      const entity = line.accountType === 'CUSTOMER' ? customers.find(c => c.id === line.accountId) :
+                     line.accountType === 'SUPPLIER' ? suppliers.find(s => s.id === line.accountId) :
+                     line.accountType === 'PARTNER' ? partners.find(p => p.id === line.accountId) :
+                     (line.accountType === 'LIABILITY' || line.accountType === 'EMPLOYEE_ADVANCE') ? employees.find(e => e.id === line.accountId) :
+                     line.accountType === 'TREASURY' ? treasuries.find(t => t.id === line.accountId) : null;
+      
+      if (entity) {
+         const accountCurrency = (entity as any).openingBalanceCurrency || 'EGP';
+         const accountRate = getEffectiveRate(entity, accountCurrency, currencies);
+         const amount = (line.currencyCode === accountCurrency && line.originalAmount) 
+           ? (Number(line.debit) > 0 ? Math.abs(Number(line.originalAmount)) : -Math.abs(Number(line.originalAmount))) 
+           : (Number(line.debit || 0) - Number(line.credit || 0)) / accountRate;
+         
+         if (['CUSTOMER', 'TREASURY', 'EMPLOYEE_ADVANCE', 'ASSET'].includes(line.accountType)) {
+           balances[key].balanceInAccountCurrency += amount;
+         } else {
+           balances[key].balanceInAccountCurrency -= amount;
+         }
+      }
+
+      if (date >= fromDate) {
+        balances[key].periodDebit += Number(line.debit || 0);
+        balances[key].periodCredit += Number(line.credit || 0);
+      }
+    }
 
     return Object.values(balances).filter(b => b.debit !== 0 || b.credit !== 0);
   }, [filteredJournalEntries, customers, suppliers, partners, employees, treasuries, currencies, fromDate, toDate, transactions]);

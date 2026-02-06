@@ -303,10 +303,21 @@ export const DataService = {
 
         if ((mergedData as any).journalEntries && Array.isArray((mergedData as any).journalEntries)) {
             const allLines = (mergedData as any)._allJournalLines || [];
+            
+            // Attach lines to journal entries
             (mergedData as any).journalEntries = (mergedData as any).journalEntries.map((entry: any) => {
-                const entryLines = (entry.lines && entry.lines.length > 0) ? entry.lines : (Array.isArray(allLines) ? allLines.filter((l: any) => l.journalEntryId === entry.id) : []);
+                const entryLines = Array.isArray(allLines) ? allLines.filter((l: any) => l.journalEntryId === entry.id) : [];
                 return { ...entry, lines: entryLines };
             });
+
+            // Attach lines to transactions if they exist
+            if ((mergedData as any).transactions && Array.isArray((mergedData as any).transactions)) {
+                (mergedData as any).transactions = (mergedData as any).transactions.map((tx: any) => {
+                    const txLines = Array.isArray(allLines) ? allLines.filter((l: any) => l.transactionId === tx.id) : [];
+                    return { ...tx, lines: txLines };
+                });
+            }
+            
             delete (mergedData as any)._allJournalLines;
         }
         

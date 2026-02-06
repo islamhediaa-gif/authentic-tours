@@ -135,7 +135,7 @@ function createWindow() {
 
   // تحديد المسار باستخدام app.getAppPath لضمان الدقة داخل وخارج الـ ASAR
   const appPath = app.getAppPath();
-  const indexPath = path.join(appPath, 'dist', 'index.html');
+  const indexPath = path.join(appPath, 'vercel_output', 'index.html');
   
   if (fs.existsSync(indexPath)) {
     mainWindow.loadFile(indexPath).catch(err => {
@@ -143,11 +143,11 @@ function createWindow() {
     });
   } else {
     // محاولة أخيرة في حال كان الهيكل مختلفاً
-    const fallbackPath = path.join(__dirname, 'dist', 'index.html');
+    const fallbackPath = path.join(__dirname, 'vercel_output', 'index.html');
     if (fs.existsSync(fallbackPath)) {
       mainWindow.loadFile(fallbackPath);
     } else {
-      mainWindow.loadURL('data:text/html,<html><body style="background:white;display:flex;align-items:center;justify-content:center;height:100vh;font-family:Arial;"><div><h1 style="color:red">Error: dist/index.html not found</h1><p>Path: ' + indexPath + '</p></div></body></html>');
+      mainWindow.loadURL('data:text/html,<html><body style="background:white;display:flex;align-items:center;justify-content:center;height:100vh;font-family:Arial;"><div><h1 style="color:red">Error: index.html not found</h1><p>Path: ' + indexPath + '</p></div></body></html>');
     }
   }
 
@@ -193,7 +193,7 @@ function createWindow() {
         mainWindow.loadURL(`data:text/html,<html><body style="background: white; display: flex; align-items: center; justify-content: center; height: 100vh; font-family: Cairo, sans-serif; direction: rtl;">
           <div style="text-align: center;">
             <h1 style="color: #e11d48;">فشل تحميل النظام</h1>
-            <p>برجاء التأكد من وجود مجلد dist أو تشغيل سيرفر التطوير.</p>
+            <p>برجاء التأكد من وجود مجلد vercel_output أو تشغيل سيرفر التطوير.</p>
             <p style="font-size: 12px; color: #64748b;">خطأ: ${errorDescription}</p>
           </div>
         </body></html>`);

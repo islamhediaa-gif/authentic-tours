@@ -60,6 +60,83 @@ const pool = (typeof dbConfig === 'string')
       connectTimeout: 30000
     });
 
+// --- GLOBAL HELPERS (Available early) ---
+const tableColumnsCache = {};
+
+async function getTableColumns(table) {
+  if (tableColumnsCache[table]) return tableColumnsCache[table];
+  try {
+    const [cols] = await pool.query(mysqlLib.format("SHOW COLUMNS FROM ??", [table]));
+    const names = cols.map(c => c.Field);
+    tableColumnsCache[table] = names;
+    return names;
+  } catch (e) {
+    console.error(`Failed to get columns for ${table}:`, e.message);
+    return null;
+  }
+}
+
+const toSnake = (obj) => {
+  if (obj === null || typeof obj !== 'object') return obj;
+  const snake = {};
+  for (const key in obj) {
+    let snakeKey = key.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
+    if (key === 'id') snakeKey = 'id';
+    if (key === 'tripId') snakeKey = 'trip_id';
+    if (key === 'programId') snakeKey = 'program_id';
+    if (key === 'journalEntryId') snakeKey = 'journal_entry_id';
+    if (key === 'transactionId') snakeKey = 'transaction_id';
+    if (key === 'costCenterId') snakeKey = 'cost_center_id';
+    if (key === 'tenantId') snakeKey = 'tenant_id';
+    let value = obj[key];
+    if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(value)) {
+      try {
+        const d = new Date(value);
+        if (!isNaN(d.getTime())) value = d.toISOString().slice(0, 19).replace('T', ' ');
+      } catch (e) {}
+    }
+    snake[snakeKey] = value;
+  }
+  return snake;
+};
+
+async function bulkUpsert(table, records, tenant_id) {
+    if (records.length === 0) return;
+    const validColumns = await getTableColumns(table);
+    const sanitized = records.map(r => {
+        const filtered = {};
+        if (validColumns) {
+            for (const col of validColumns) if (r[col] !== undefined) filtered[col] = r[col];
+        } else Object.assign(filtered, r);
+        return filtered;
+    });
+    const CHUNK_SIZE = 500;
+    let totalAffected = 0;
+    for (let i = 0; i < sanitized.length; i += CHUNK_SIZE) {
+        const chunk = sanitized.slice(i, i + CHUNK_SIZE);
+        const keys = Array.from(new Set(chunk.flatMap(r => Object.keys(r))));
+        const values = [];
+        const placeholders = chunk.map(record => {
+            const row = keys.map(k => {
+                let v = record[k] === undefined ? null : record[k];
+                if (v !== null && typeof v === 'object') v = JSON.stringify(v);
+                values.push(v);
+                return '?';
+            });
+            return `(${row.join(', ')})`;
+        }).join(', ');
+        const updates = keys.filter(k => k !== 'id').map(k => mysqlLib.format('?? = VALUES(??)', [k, k])).join(', ');
+        let sql = (updates.length > 0) 
+            ? mysqlLib.format(`INSERT INTO ?? (${keys.map(() => '??').join(', ')}) VALUES `, [table, ...keys]) + placeholders + ` ON DUPLICATE KEY UPDATE ${updates}`
+            : mysqlLib.format(`INSERT IGNORE INTO ?? (${keys.map(() => '??').join(', ')}) VALUES `, [table, ...keys]) + placeholders;
+        try {
+            const [res] = await pool.query(sql, values);
+            totalAffected += res.affectedRows;
+        } catch (e) { console.error(`❌ Bulk upsert failed for ${table}:`, e.message); }
+    }
+    return { affectedRows: totalAffected };
+}
+
 // Single Big Fetch Endpoint for high reliability
 app.get('/api/data-all', async (req, res) => {
   try {
@@ -124,6 +201,27 @@ const initDB = async () => {
       }
     } catch (e) { console.warn("Programs table might not exist yet during init"); }
 
+    try {
+      const [jlCols] = await pool.query("SHOW COLUMNS FROM journal_lines");
+      const jlColNames = jlCols.map(c => c.Field);
+      
+      // Force ID to be VARCHAR(255) to support our generated unique IDs
+      const idCol = jlCols.find(c => c.Field === 'id');
+      if (idCol && idCol.Type.toLowerCase().includes('int')) {
+          console.log("SuperRestore: Changing journal_lines.id from INT to VARCHAR(255)");
+          await pool.query("ALTER TABLE journal_lines MODIFY COLUMN id VARCHAR(255)");
+      }
+
+      if (!jlColNames.includes('transaction_id')) {
+        await pool.query("ALTER TABLE journal_lines ADD COLUMN transaction_id VARCHAR(255)");
+        console.log("Added 'transaction_id' column to journal_lines");
+      }
+      if (!jlColNames.includes('trip_id')) {
+        await pool.query("ALTER TABLE journal_lines ADD COLUMN trip_id VARCHAR(255)");
+        console.log("Added 'trip_id' column to journal_lines");
+      }
+    } catch (e) { console.warn("Journal lines table might not exist yet during init"); }
+
     console.log("Database initialized and schema verified");
   } catch (err) {
     console.error("Database initialization failed:", err.message);
@@ -134,8 +232,18 @@ initDB();
 // Admin Schema Fix Endpoint
 app.get('/api/admin/fix-schema', async (req, res) => {
   try {
+    // Force add columns if missing
+    const [cols] = await pool.query("SHOW COLUMNS FROM journal_lines");
+    const names = cols.map(c => c.Field);
+    if (!names.includes('transaction_id')) {
+        await pool.query("ALTER TABLE journal_lines ADD COLUMN transaction_id VARCHAR(255)");
+    }
+    if (!names.includes('trip_id')) {
+        await pool.query("ALTER TABLE journal_lines ADD COLUMN trip_id VARCHAR(255)");
+    }
+    
     await initDB();
-    res.json({ success: true, message: "Schema verified and fixed if needed" });
+    res.json({ success: true, message: "Schema verified and fixed manually" });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -147,11 +255,34 @@ app.post('/api/admin/super-restore', async (req, res) => {
     const { data, tenant_id } = req.body;
     if (!data || !tenant_id) throw new Error('Missing data or tenant_id');
 
+    // Clear column cache to ensure we see newly added columns
+    for (const k in tableColumnsCache) delete tableColumnsCache[k];
+
     console.log(`🚀 [Super Restore] Starting full wipe and restore for tenant: ${tenant_id}`);
+    
+    // Auto-fix journal_lines schema before wipe/restore if columns missing
+    try {
+        const [jlCols] = await pool.query("SHOW COLUMNS FROM journal_lines");
+        const jlColNames = jlCols.map(c => c.Field);
+
+        const idCol = jlCols.find(c => c.Field === 'id');
+        if (idCol && idCol.Type.toLowerCase().includes('int')) {
+            await pool.query("ALTER TABLE journal_lines MODIFY COLUMN id VARCHAR(255)");
+        }
+
+        if (!jlColNames.includes('transaction_id')) {
+            await pool.query("ALTER TABLE journal_lines ADD COLUMN transaction_id VARCHAR(255)");
+            console.log("SuperRestore: Fixed missing transaction_id");
+        }
+        if (!jlColNames.includes('trip_id')) {
+            await pool.query("ALTER TABLE journal_lines ADD COLUMN trip_id VARCHAR(255)");
+            console.log("SuperRestore: Fixed missing trip_id");
+        }
+    } catch (e) { console.error("Schema check failed in SuperRestore:", e.message); }
     
     // 1. Nuclear Wipe first
     const tablesToWipe = [
-      'transactions', 'journal_lines', 'journal_entries', 'customers', 
+      'journal_lines', 'transactions', 'journal_entries', 'customers', 
       'suppliers', 'partners', 'employees', 'treasuries', 'currencies', 
       'cost_centers', 'departments', 'designations', 'attendance_logs', 
       'shifts', 'employee_leaves', 'employee_allowances', 
@@ -160,8 +291,10 @@ app.post('/api/admin/super-restore', async (req, res) => {
 
     for (const table of tablesToWipe) {
       try {
+        console.log(`[Super Restore] Wiping table: ${table}`);
         const sql = mysqlLib.format(`DELETE FROM ?? WHERE tenant_id = ?`, [table, tenant_id]);
-        await pool.query(sql);
+        const [res] = await pool.query(sql);
+        console.log(`[Super Restore] Wiped ${table}: ${res.affectedRows} rows deleted`);
       } catch (e) {
         console.warn(`Wipe failed for ${table}: ${e.message}`);
       }
@@ -210,7 +343,8 @@ app.post('/api/admin/super-restore', async (req, res) => {
                       if (!l.trip_id && entry.tripId) l.trip_id = entry.tripId;
                       if (!l.program_id && entry.programId) l.program_id = entry.programId;
                       
-                      if (!l.id) l.id = `L_${entry.id}_${lIdx}`;
+                      // Using a more unique ID for journal lines to avoid collisions
+                      l.id = `L_${entry.id}_${lIdx}_${Math.random().toString(36).substr(2, 5)}`;
                       allJournalLines.push(l);
                   });
               }
@@ -229,7 +363,7 @@ app.post('/api/admin/super-restore', async (req, res) => {
                       if (!l.trip_id && tx.tripId) l.trip_id = tx.tripId;
                       if (!l.program_id && tx.programId) l.program_id = tx.programId;
                       
-                      if (!l.id) l.id = `TX_L_${tx.id}_${lIdx}`;
+                      l.id = `TX_L_${tx.id}_${lIdx}_${Math.random().toString(36).substr(2, 5)}`;
                       allJournalLines.push(l);
                   });
               }
@@ -257,105 +391,35 @@ app.post('/api/admin/super-restore', async (req, res) => {
 
     // Final bulk upsert for ALL journal lines
     if (allJournalLines.length > 0) {
-        console.log(`📝 [Super Restore] Upserting total ${allJournalLines.length} journal lines...`);
-        await bulkUpsert('journal_lines', allJournalLines, tenant_id);
+        const [checkCols] = await pool.query("SHOW COLUMNS FROM journal_lines");
+        const idCol = checkCols.find(c => c.Field === 'id');
+        results['journal_lines_id_type'] = idCol ? idCol.Type : 'unknown';
+        
+        console.log(`📝 [Super Restore] Upserting total ${allJournalLines.length} journal lines... ID Type: ${idCol?.Type}`);
+        const bulkRes = await bulkUpsert('journal_lines', allJournalLines, tenant_id);
         results['journal_lines_total'] = allJournalLines.length;
+        results['journal_lines_affected'] = bulkRes?.affectedRows || 0;
     }
 
+    console.log(`✅ [Super Restore] Completed successfully for ${tenant_id}. Results:`, results);
     res.json({ success: true, results });
   } catch (error) {
-    console.error(`❌ [Super Restore] Failed:`, error.message);
+    console.error(`❌ [Super Restore] Failed:`, error.message, error.stack);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Internal helper for super-restore
-async function bulkUpsert(table, records, tenant_id) {
-    if (records.length === 0) return;
-    
-    const validColumns = await getTableColumns(table);
-    const sanitized = records.map(r => {
-        if (!validColumns) return r;
-        const filtered = {};
-        for (const col of validColumns) {
-            if (r[col] !== undefined) filtered[col] = r[col];
-        }
-        return filtered;
-    });
-
-    // Chunk even super-restore a bit to avoid max_allowed_packet, but with large chunks
-    const CHUNK_SIZE = 1000;
-    for (let i = 0; i < sanitized.length; i += CHUNK_SIZE) {
-        const chunk = sanitized.slice(i, i + CHUNK_SIZE);
-        const keys = Array.from(new Set(chunk.flatMap(r => Object.keys(r))));
-        const values = [];
-        const placeholders = chunk.map(record => {
-            const row = keys.map(k => {
-                let v = record[k] === undefined ? null : record[k];
-                if (v !== null && typeof v === 'object') v = JSON.stringify(v);
-                values.push(v);
-                return '?';
-            });
-            return `(${row.join(', ')})`;
-        }).join(', ');
-
-        const updates = keys.map(k => mysqlLib.format('?? = VALUES(??)', [k, k])).join(', ');
-        const sql = mysqlLib.format(
-            `INSERT INTO ?? (${keys.map(() => '??').join(', ')}) VALUES `,
-            [table, ...keys]
-        ) + placeholders + ` ON DUPLICATE KEY UPDATE ${updates}`;
-        
-        await pool.query(sql, values);
-    }
-}
-
-// Cache for table columns to improve performance
-const tableColumnsCache = {};
-async function getTableColumns(table) {
-  if (tableColumnsCache[table]) return tableColumnsCache[table];
-  try {
-    const [cols] = await pool.query(mysqlLib.format("SHOW COLUMNS FROM ??", [table]));
-    const names = cols.map(c => c.Field);
-    tableColumnsCache[table] = names;
-    return names;
-  } catch (e) {
-    console.error(`Failed to get columns for ${table}:`, e.message);
-    return null;
-  }
-}
-
-// Helper for snake_case conversion (simplified)
-const toSnake = (obj) => {
-  if (obj === null || typeof obj !== 'object') return obj;
-  const snake = {};
-  for (const key in obj) {
-    let snakeKey = key.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
-    
-    // Explicit mapping for common relational IDs
-    if (key === 'tripId') snakeKey = 'trip_id';
-    if (key === 'programId') snakeKey = 'program_id';
-    if (key === 'journalEntryId') snakeKey = 'journal_entry_id';
-    if (key === 'costCenterId') snakeKey = 'cost_center_id';
-    if (key === 'tenantId') snakeKey = 'tenant_id';
-
-    let value = obj[key];
-    
-    // Convert ISO date strings to MySQL format
-    if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(value)) {
-      try {
-        const d = new Date(value);
-        if (!isNaN(d.getTime())) {
-          value = d.toISOString().slice(0, 19).replace('T', ' ');
-        }
-      } catch (e) {}
-    }
-    
-    snake[snakeKey] = value;
-  }
-  return snake;
-};
-
 // Generic Fetch Endpoint
+app.get('/api/admin/describe/:table', async (req, res) => {
+  try {
+    const { table } = req.params;
+    const [cols] = await pool.query(mysqlLib.format("DESCRIBE ??", [table]));
+    res.json({ success: true, data: cols });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 app.get('/api/data/:table', async (req, res) => {
   try {
     const { table } = req.params;
