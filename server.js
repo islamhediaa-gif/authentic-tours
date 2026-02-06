@@ -301,11 +301,27 @@ async function bulkUpsert(table, records, tenant_id) {
 
         const updates = keys.map(k => mysqlLib.format('?? = VALUES(??)', [k, k])).join(', ');
         const sql = mysqlLib.format(
-            `INSERT INTO ?? (${keys.map(() => '??').join(', ')}) VALUES ${placeholders} ON DUPLICATE KEY UPDATE ${updates}`,
+            `INSERT INTO ?? (${keys.map(() => '??').join(', ')}) VALUES `,
             [table, ...keys]
-        );
+        ) + placeholders + ` ON DUPLICATE KEY UPDATE ${updates}`;
+        
         await pool.query(sql, values);
     }
+}
+
+// Cache for table columns to improve performance
+const tableColumnsCache = {};
+async function getTableColumns(table) {
+  if (tableColumnsCache[table]) return tableColumnsCache[table];
+  try {
+    const [cols] = await pool.query(mysqlLib.format("SHOW COLUMNS FROM ??", [table]));
+    const names = cols.map(c => c.Field);
+    tableColumnsCache[table] = names;
+    return names;
+  } catch (e) {
+    console.error(`Failed to get columns for ${table}:`, e.message);
+    return null;
+  }
 }
 
 // Helper for snake_case conversion (simplified)
@@ -464,11 +480,9 @@ app.post('/api/upsert/:table', async (req, res) => {
     const updates = allKeys.map(key => mysqlLib.format('?? = VALUES(??)', [key, key])).join(', ');
     
     const sql = mysqlLib.format(
-      `INSERT INTO ?? (${allKeys.map(() => '??').join(', ')}) 
-       VALUES ${placeholders.join(', ')} 
-       ON DUPLICATE KEY UPDATE ${updates}`,
+      `INSERT INTO ?? (${allKeys.map(() => '??').join(', ')}) VALUES `,
       [table, ...allKeys]
-    );
+    ) + placeholders.join(', ') + ` ON DUPLICATE KEY UPDATE ${updates}`;
 
     try {
       await pool.query(sql, values);
