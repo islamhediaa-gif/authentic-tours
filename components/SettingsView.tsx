@@ -761,9 +761,9 @@ const SettingsView: React.FC<SettingsViewProps> = ({
                               <td className="px-6 py-4">
                                  <div className="flex items-center gap-2">
                                     <div className="w-8 h-8 bg-indigo-100 rounded-lg flex items-center justify-center text-indigo-700 font-bold text-xs">
-                                       {log.userName.charAt(0)}
+                                       {log.userName?.charAt(0) || 'U'}
                                     </div>
-                                    <span className="font-bold text-xs text-slate-700">{log.userName}</span>
+                                    <span className="font-bold text-xs text-slate-700">{log.userName || 'User'}</span>
                                  </div>
                               </td>
                               <td className="px-6 py-4">

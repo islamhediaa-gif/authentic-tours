@@ -69,7 +69,7 @@ const UserManagementView: React.FC<UserManagementViewProps> = ({ users, setUsers
     e.preventDefault();
     if (!editingUser) return;
     const updatedUser = { ...editingUser, ...formData };
-    setUsers(prev => (prev || []).map(u => u.id === editingUser.id ? updatedUser : u));
+    setUsers(prev => (Array.isArray(prev) ? prev : []).map(u => u.id === editingUser.id ? updatedUser : u));
     addAuditLog('UPDATE', 'SETTINGS', editingUser.id, `تعديل بيانات المستخدم: ${updatedUser.name} (@${updatedUser.username})`, editingUser, updatedUser);
     setShowAdd(false);
     setEditingUser(null);
@@ -77,7 +77,7 @@ const UserManagementView: React.FC<UserManagementViewProps> = ({ users, setUsers
   };
 
   const toggleSelectAll = () => {
-    const selectable = (users || []).filter(u => u && u.id !== 'admin' && u.id !== currentUser?.id);
+    const selectable = (Array.isArray(users) ? users : []).filter(u => u && u.id !== 'admin' && u.id !== currentUser?.id);
     if (selectedIds.length === selectable.length) {
       setSelectedIds([]);
     } else {
@@ -123,7 +123,7 @@ const UserManagementView: React.FC<UserManagementViewProps> = ({ users, setUsers
             onClick={toggleSelectAll}
             className="bg-slate-100 text-slate-900 px-8 py-3 rounded-xl font-bold text-sm flex items-center gap-3 hover:bg-slate-200 transition-all active:scale-95"
           >
-            {selectedIds.length === users.filter(u => u.id !== 'admin' && u.id !== currentUser.id).length ? 'إلغاء تحديد الكل' : 'تحديد الكل'}
+            {selectedIds.length === (Array.isArray(users) ? users : []).filter(u => u && u.id !== 'admin' && u.id !== currentUser?.id).length ? 'إلغاء تحديد الكل' : 'تحديد الكل'}
           </button>
           <button 
             onClick={() => setShowAdd(true)} 
@@ -207,7 +207,7 @@ const UserManagementView: React.FC<UserManagementViewProps> = ({ users, setUsers
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {(users || []).map(u => (
+          {Array.isArray(users) && users.map(u => (
             <div key={u?.id} className={`bg-white p-6 rounded-3xl shadow-sm border relative group transition-all duration-300 hover:border-indigo-200 overflow-hidden ${(u?.id && selectedIds.includes(u.id)) ? 'ring-2 ring-indigo-500 border-indigo-500' : 'border-slate-200'}`}>
                <div className="flex justify-between items-start mb-6">
                   <div className="flex items-center gap-4">
@@ -233,7 +233,7 @@ const UserManagementView: React.FC<UserManagementViewProps> = ({ users, setUsers
               <h4 className="text-xl font-bold text-slate-900 tracking-tight">{u?.name}</h4>
               <p className="text-[10px] font-bold text-indigo-600 uppercase tracking-widest mt-1">@{u?.username} • {u?.role}</p>
               <div className="mt-6 pt-6 border-t border-slate-50 flex flex-wrap gap-1.5">
-                 {(u?.permissions || []).map(p => (
+                 {Array.isArray(u?.permissions) && u.permissions.map(p => (
                    <span key={p} className="text-[9px] font-bold bg-slate-100 text-slate-500 px-2 py-0.5 rounded-md uppercase">{p}</span>
                  ))}
               </div>

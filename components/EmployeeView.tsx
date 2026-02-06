@@ -1,9 +1,9 @@
 
 import React, { useState, useMemo } from 'react';
-import { Plus, Search, Contact2, Trash2, Edit2, Save, X, DollarSign, TrendingUp, UserCheck, Briefcase, Users, Activity, Wallet, Landmark, ArrowRightLeft, FileText, Calendar, Award, Building2, ClipboardList, Shield, HardDrive } from 'lucide-react';
+import { Plus, Search, Contact2, Trash2, Edit2, Save, X, DollarSign, TrendingUp, UserCheck, Briefcase, Users, Activity, Wallet, Landmark, ArrowRightLeft, FileText, Calendar, Award, Building2, ClipboardList, Shield, HardDrive, RotateCcw } from 'lucide-react';
 import { 
   Employee, Transaction, User as UserType, Treasury, JournalEntry, CostCenter, Shift,
-  EmployeeLeave, EmployeeAllowance, EmployeeDocument, Department, Designation 
+  EmployeeLeave, EmployeeAllowance, EmployeeDocument, EmployeeSettlement, Department, Designation 
 } from '../types';
 import SearchableSelect from './SearchableSelect';
 import { Layers, Fingerprint, Clock } from 'lucide-react';
@@ -33,6 +33,8 @@ interface EmployeeViewProps {
   setAllowances: React.Dispatch<React.SetStateAction<EmployeeAllowance[]>>;
   documents: EmployeeDocument[];
   setDocuments: React.Dispatch<React.SetStateAction<EmployeeDocument[]>>;
+  settlements: EmployeeSettlement[];
+  setSettlements: React.Dispatch<React.SetStateAction<EmployeeSettlement[]>>;
   departments: Department[];
   setDepartments: React.Dispatch<React.SetStateAction<Department[]>>;
   designations: Designation[];
@@ -44,6 +46,7 @@ const EmployeeView: React.FC<EmployeeViewProps> = ({
   currentUser, searchTerm: globalSearchTerm = '', formatCurrency, addAuditLog, 
   costCenters, enableCostCenters, initialEditingId, onClearInitialEdit, shifts, attendanceLogs,
   leaves, setLeaves, allowances, setAllowances, documents, setDocuments, 
+  settlements, setSettlements,
   departments, setDepartments, designations, setDesignations
 }) => {
   const isHidden = currentUser?.permissions?.includes('HIDE_FINANCIAL_AMOUNTS');
@@ -55,6 +58,7 @@ const EmployeeView: React.FC<EmployeeViewProps> = ({
   const [showLeaveForm, setShowLeaveForm] = useState(false);
   const [showAllowanceForm, setShowAllowanceForm] = useState(false);
   const [showDocForm, setShowDocForm] = useState(false);
+  const [showSettlementForm, setShowSettlementForm] = useState(false);
   const [showOrgForm, setShowOrgForm] = useState(false);
   const [showCommissionForm, setShowCommissionForm] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
@@ -67,6 +71,7 @@ const EmployeeView: React.FC<EmployeeViewProps> = ({
     allowances: 0,
     advances: 0,
     deductions: 0,
+    settlements: 0,
     treasuryId: '',
     date: new Date().toISOString().split('T')[0]
   });
@@ -77,6 +82,9 @@ const EmployeeView: React.FC<EmployeeViewProps> = ({
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
+
+  const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
+  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
 
   React.useEffect(() => {
     if (initialEditingId) {
@@ -319,73 +327,135 @@ const EmployeeView: React.FC<EmployeeViewProps> = ({
     setEditingId(null);
   };
 
-  const getEmployeeStats = (employeeId: string) => {
-    const employeeTx = (transactions || []).filter(t => t && t.employeeId === employeeId && !t.isVoided);
+  const getEmployeeStats = (employeeId: string, targetMonth?: number, targetYear?: number) => {
+    const m = targetMonth !== undefined ? targetMonth : selectedMonth;
+    const y = targetYear !== undefined ? targetYear : selectedYear;
+    const periodKey = `${y}-${String(m + 1).padStart(2, '0')}`;
+
     const employee = (employees || []).find(e => e && e.id === employeeId);
+
+    const employeeTx = (transactions || []).filter(t => {
+      if (!t || t.employeeId !== employeeId || t.isVoided) return false;
+      if (!t.date) return false;
+      const d = new Date(t.date);
+      return d.getMonth() === m && d.getFullYear() === y;
+    });
     
-    // Pro-rated salary calculation if joined this month
+    // Pro-rated salary calculation
     let basicSalary = employee?.basicSalary || 0;
-    if (employee?.joiningDate) {
+
+    // Check if salary for this month is already paid/closed
+    const isSalaryPaid = employee?.paidSalaries?.includes(periodKey);
+    const isCommissionPaid = employee?.paidCommissions?.includes(periodKey);
+
+    if (isSalaryPaid) {
+      basicSalary = 0; // Already paid, don't show as due
+    } else if (employee?.joiningDate) {
       const joinDate = new Date(employee.joiningDate);
-      const now = new Date();
-      // If joined in the same month and year as "now"
-      if (joinDate.getMonth() === now.getMonth() && joinDate.getFullYear() === now.getFullYear()) {
-        const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+      // If joined in the same month and year as target period
+      if (joinDate.getMonth() === m && joinDate.getFullYear() === y) {
+        const daysInMonth = new Date(y, m + 1, 0).getDate();
         const workingDays = daysInMonth - joinDate.getDate() + 1;
         if (workingDays < daysInMonth && workingDays > 0) {
            basicSalary = (basicSalary / daysInMonth) * workingDays;
         }
+      } else if (joinDate > new Date(y, m + 1, 0)) {
+        // Not joined yet in this period
+        basicSalary = 0;
       }
     }
 
-    // حساب الأرباح لكل عملية
+    // Profit calculation for the specific month
     let totalProfit = 0;
-
     employeeTx.forEach(tx => {
       if (!tx) return;
-      // الربح بناءً على العملية
       const rateScale = tx.exchangeRate || 1;
       const sellBase = ((tx.sellingPrice || 0) - (tx.discount || 0)) * rateScale;
       const buyBase = (tx.purchasePrice || (tx.type === 'PURCHASE_ONLY' || tx.isPurchaseOnly ? tx.amount : 0) || 0) * rateScale;
-      
-      const profit = sellBase - buyBase;
-      totalProfit += profit;
+      totalProfit += (sellBase - buyBase);
     });
     
-    const empCommissions = calculatedBalances?.employees?.[employeeId]?.commissions || 0;
-    const empAdvances = calculatedBalances?.employees?.[employeeId]?.advances || 0;
+    // Commissions from ledger for this specific month
+    let monthlyCommission = 0;
+    if (isCommissionPaid) {
+      monthlyCommission = 0;
+    } else {
+      (journalEntries || []).forEach(entry => {
+        if (!entry?.lines || !entry.date) return;
+        const entryDate = new Date(entry.date);
+        if (entryDate.getMonth() !== m || entryDate.getFullYear() !== y) return;
 
-    // حساب خصومات البصمة
+        entry.lines.forEach(line => {
+          if (line.accountId === employeeId && line.accountType === 'LIABILITY') {
+            // Commission liability: credit increases it, debit decreases it (net for the month)
+            monthlyCommission += (line.credit || 0) - (line.debit || 0);
+          }
+        });
+      });
+    }
+
+    // Advances for this month
+    let monthlyAdvances = 0;
+    (journalEntries || []).forEach(entry => {
+      if (!entry?.lines || !entry.date) return;
+      const entryDate = new Date(entry.date);
+      if (entryDate.getMonth() !== m || entryDate.getFullYear() !== y) return;
+      
+      entry.lines.forEach(line => {
+        if (line.accountId === employeeId && line.accountType === 'EMPLOYEE_ADVANCE') {
+          monthlyAdvances += (line.debit || 0) - (line.credit || 0);
+        }
+      });
+    });
+
+    // Attendance Deductions for this month
     let attendanceDeductions = 0;
     if (employee?.fingerprintId && employee?.shiftId) {
       const shift = (shifts || []).find(s => s && s.id === employee.shiftId);
       if (shift) {
         const empLogs = (attendanceLogs || []).filter(l => l && l.deviceUserId == employee.fingerprintId);
-        // حساب للشهر الحالي افتراضياً
-        const now = new Date();
-        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-        const endOfToday = new Date();
-        const attStats = calculateAttendanceDeductions(empLogs, shift, employee, startOfMonth, endOfToday);
+        const startOfPeriod = new Date(y, m, 1);
+        const endOfPeriod = new Date(y, m + 1, 0, 23, 59, 59);
+        const attStats = calculateAttendanceDeductions(empLogs, shift, employee, startOfPeriod, endOfPeriod);
         attendanceDeductions = attStats?.totalDeductions || 0;
       }
     }
     
     const empAllowances = (allowances || []).filter(a => a && a.employeeId === employeeId && a.isMonthly);
-    const totalAllowances = empAllowances.reduce((s, a) => {
+    let totalAllowances = isSalaryPaid ? 0 : empAllowances.reduce((s, a) => {
       if (!a) return s;
       if (a.type === 'FIXED') return s + (a.amount || 0);
       return s + (employee?.basicSalary || 0) * ((a.amount || 0) / 100);
     }, 0);
+
+    // Settlements for this month
+    const empSettlements = (settlements || []).filter(s => {
+      if (!s || s.employeeId !== employeeId) return false;
+      const d = new Date(s.date);
+      return d.getMonth() === m && d.getFullYear() === y;
+    });
+    const monthlySettlements = empSettlements.reduce((sum, s) => {
+      return sum + (s.type === 'BONUS' ? s.amount : -s.amount);
+    }, 0);
     
+    // If salary is paid, advances and deductions were already handled
+    const effectiveAdvances = isSalaryPaid ? 0 : monthlyAdvances;
+    const effectiveDeductions = isSalaryPaid ? 0 : attendanceDeductions;
+    const effectiveSalary = isSalaryPaid ? 0 : basicSalary;
+
     return {
       txCount: employeeTx.length,
       totalProfit,
-      commission: empCommissions, // Use ledger balance
-      advances: empAdvances,
+      commission: monthlyCommission,
+      advances: monthlyAdvances,
       attendanceDeductions,
       allowances: totalAllowances,
-      totalPayable: basicSalary + empCommissions + totalAllowances - empAdvances - attendanceDeductions,
-      actualBasicSalary: basicSalary // Returning the calculated salary
+      settlements: monthlySettlements,
+      totalPayable: effectiveSalary + monthlyCommission + totalAllowances + monthlySettlements - effectiveAdvances - effectiveDeductions,
+      actualBasicSalary: basicSalary,
+      isSalaryPaid,
+      isCommissionPaid,
+      periodKey
     };
   };
 
@@ -396,13 +466,14 @@ const EmployeeView: React.FC<EmployeeViewProps> = ({
     
     setPaymentFormData({
       employeeId,
-      paySalary: true,
-      payCommission: true,
+      paySalary: !stats.isSalaryPaid,
+      payCommission: !stats.isCommissionPaid,
       salaryAmount: stats.actualBasicSalary,
       commissionAmount: stats.commission,
       allowances: stats.allowances,
       advances: stats.advances,
       deductions: stats.attendanceDeductions,
+      settlements: stats.settlements,
       treasuryId: (treasuries || [])[0]?.id || '',
       date: new Date().toISOString().split('T')[0]
     });
@@ -416,10 +487,10 @@ const EmployeeView: React.FC<EmployeeViewProps> = ({
 
     // 1. Pay Salary Part
     if (paymentFormData.paySalary) {
-      const salaryPart = paymentFormData.salaryAmount + paymentFormData.allowances - paymentFormData.deductions;
+      const salaryPart = paymentFormData.salaryAmount + paymentFormData.allowances + paymentFormData.settlements - paymentFormData.deductions - paymentFormData.advances;
       if (salaryPart > 0) {
         addTransaction({
-          description: `صرف راتب شهر: ${emp.name}`,
+          description: `صرف صافي راتب شهر: ${emp.name} (بعد خصم السلف والبدلات)`,
           amount: salaryPart,
           amountInBase: salaryPart,
           type: 'EXPENSE',
@@ -462,8 +533,51 @@ const EmployeeView: React.FC<EmployeeViewProps> = ({
       });
     }
 
-    addAuditLog('CREATE', 'TRANSACTION', Date.now().toString(), `صرف مستحقات للموظف: ${emp.name}`);
+    // Update Employee record to mark periods as paid
+    const stats = getEmployeeStats(emp.id);
+    const periodKey = stats.periodKey;
+
+    setEmployees(prev => (prev || []).map(e => {
+      if (e.id === emp.id) {
+        const newPaidSalaries = paymentFormData.paySalary 
+          ? Array.from(new Set([...(e.paidSalaries || []), periodKey]))
+          : e.paidSalaries;
+        const newPaidCommissions = paymentFormData.payCommission
+          ? Array.from(new Set([...(e.paidCommissions || []), periodKey]))
+          : e.paidCommissions;
+        
+        return {
+          ...e,
+          paidSalaries: newPaidSalaries,
+          paidCommissions: newPaidCommissions
+        };
+      }
+      return e;
+    }));
+
+    addAuditLog('CREATE', 'TRANSACTION', Date.now().toString(), `صرف مستحقات للموظف: ${emp.name} للفترة ${periodKey}`);
     setShowPaymentModal(false);
+  };
+
+  const handleReopenMonth = (employeeId: string) => {
+    const emp = (employees || []).find(e => e && e.id === employeeId);
+    if (!emp) return;
+    const stats = getEmployeeStats(employeeId);
+    const periodKey = stats.periodKey;
+
+    if (confirm(`هل أنت متأكد من إعادة فتح شهر ${["يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"][selectedMonth]} للموظف ${emp.name}؟`)) {
+      setEmployees(prev => (prev || []).map(e => {
+        if (e.id === employeeId) {
+          return {
+            ...e,
+            paidSalaries: (e.paidSalaries || []).filter(p => p !== periodKey),
+            paidCommissions: (e.paidCommissions || []).filter(p => p !== periodKey)
+          };
+        }
+        return e;
+      }));
+      addAuditLog('UPDATE', 'EMPLOYEE', employeeId, `إعادة فتح الشهر المالي للموظف: ${emp.name} للفترة ${periodKey}`);
+    }
   };
 
   const handleLeaveSubmit = (e: any) => {
@@ -513,6 +627,22 @@ const EmployeeView: React.FC<EmployeeViewProps> = ({
     setDocuments(prev => [...(prev || []), newDoc]);
     setShowDocForm(false);
     addAuditLog('CREATE', 'DOCUMENT', newDoc.id, `إضافة مستند للموظف: ${selectedEmp?.name}`);
+  };
+
+  const handleSettlementSubmit = (e: any) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const newSettlement: EmployeeSettlement = {
+      id: Date.now().toString(),
+      employeeId: selectedEmployeeId!,
+      amount: parseFloat(fd.get('amount') as string),
+      type: fd.get('type') as any,
+      reason: fd.get('reason') as string,
+      date: fd.get('date') as string
+    };
+    setSettlements(prev => [...(prev || []), newSettlement]);
+    setShowSettlementForm(false);
+    addAuditLog('CREATE', 'SETTLEMENT', newSettlement.id, `إضافة تسوية للموظف: ${selectedEmp?.name} بقيمة ${newSettlement.amount}`);
   };
 
   const filtered = (employees || []).filter(e => {
@@ -609,6 +739,29 @@ const EmployeeView: React.FC<EmployeeViewProps> = ({
               <span className="text-xs font-bold text-slate-500">تحديد الكل</span>
             </div>
           )}
+          
+          <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-2xl border border-slate-200 shadow-sm">
+            <Calendar size={18} className="text-indigo-600" />
+            <select 
+              value={selectedMonth} 
+              onChange={(e) => setSelectedMonth(parseInt(e.target.value))}
+              className="bg-transparent font-bold text-sm outline-none text-slate-700"
+            >
+              {["يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"].map((m, i) => (
+                <option key={i} value={i}>{m}</option>
+              ))}
+            </select>
+            <select 
+              value={selectedYear} 
+              onChange={(e) => setSelectedYear(parseInt(e.target.value))}
+              className="bg-transparent font-bold text-sm outline-none text-slate-700"
+            >
+              {[2024, 2025, 2026].map(y => (
+                <option key={y} value={y}>{y}</option>
+              ))}
+            </select>
+          </div>
+
           <div className="relative flex-1 max-w-2xl group">
             <Search className="absolute right-6 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-600 transition-colors" size={20} />
             <input 
@@ -694,6 +847,16 @@ const EmployeeView: React.FC<EmployeeViewProps> = ({
                 </select>
               </div>
             )}
+            <div className="flex flex-col gap-2">
+              <label className="text-[10px] font-bold uppercase tracking-widest text-slate-400 ml-1">التاريخ</label>
+              <input 
+                type="date" 
+                required 
+                className="p-3 bg-slate-50 border border-slate-200 rounded-xl focus:border-amber-500 outline-none font-bold text-sm text-slate-900 transition-all focus:bg-white text-center" 
+                value={advanceData.date} 
+                onChange={e => setAdvanceData({...advanceData, date: e.target.value})} 
+              />
+            </div>
             <div className="lg:col-span-4 flex justify-end gap-4 mt-6 pt-6 border-t border-slate-100">
               <button type="button" onClick={() => setShowAdvanceForm(false)} className="px-6 py-2.5 text-slate-400 font-bold text-sm hover:text-rose-600 transition-colors">إلغاء</button>
               <button type="submit" className="bg-amber-500 text-slate-900 px-8 py-2.5 rounded-xl font-bold text-sm shadow-md hover:bg-amber-600 transition-all flex items-center gap-2 active:scale-95">
@@ -926,9 +1089,14 @@ const EmployeeView: React.FC<EmployeeViewProps> = ({
                   </div>
                </div>
                <div className="p-6 grid grid-cols-2 gap-4">
-                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 flex flex-col justify-center">
+                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 flex flex-col justify-center relative">
                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">الراتب الأساسي</p>
                      <p className="text-lg font-bold text-slate-900">{isHidden ? '****' : formatCurrency(emp.basicSalary || 0)}</p>
+                     {stats.isSalaryPaid && (
+                       <span className="absolute top-2 left-2 bg-emerald-100 text-emerald-600 text-[8px] font-black px-1.5 py-0.5 rounded-md border border-emerald-200">
+                         تم الصرف
+                       </span>
+                     )}
                   </div>
                   <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 flex flex-col justify-center">
                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">النسبة</p>
@@ -938,9 +1106,14 @@ const EmployeeView: React.FC<EmployeeViewProps> = ({
                      <p className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest mb-1">الأرباح المُحققة</p>
                      <p className="text-lg font-bold text-indigo-900">{isHidden ? '****' : formatCurrency(stats.totalProfit || 0)}</p>
                   </div>
-                  <div className="bg-emerald-50 bg-opacity-50 p-4 rounded-2xl border border-emerald-100 border-opacity-50">
+                  <div className="bg-emerald-50 bg-opacity-50 p-4 rounded-2xl border border-emerald-100 border-opacity-50 relative">
                      <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest mb-1">العمولات</p>
                      <p className="text-lg font-bold text-emerald-700">{isHidden ? '****' : formatCurrency(stats.commission || 0)}</p>
+                     {stats.isCommissionPaid && (
+                       <span className="absolute top-2 left-2 bg-emerald-100 text-emerald-600 text-[8px] font-black px-1.5 py-0.5 rounded-md border border-emerald-200">
+                         تم الصرف
+                       </span>
+                     )}
                   </div>
                   <div className="bg-rose-50 bg-opacity-50 p-4 rounded-2xl border border-rose-100 border-opacity-50">
                      <p className="text-[10px] font-bold text-rose-400 uppercase tracking-widest mb-1">السلف القائمة</p>
@@ -950,24 +1123,56 @@ const EmployeeView: React.FC<EmployeeViewProps> = ({
                      <p className="text-[10px] font-bold text-amber-600 uppercase tracking-widest mb-1">خصومات البصمة</p>
                      <p className="text-lg font-bold text-amber-700">{isHidden ? '****' : formatCurrency(stats.attendanceDeductions || 0)}</p>
                   </div>
+                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 flex flex-col justify-center relative">
+                     <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">التسويات</p>
+                     <p className={`text-lg font-bold ${stats.settlements >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                        {isHidden ? '****' : formatCurrency(stats.settlements || 0)}
+                     </p>
+                     <button 
+                        onClick={() => {
+                          setSelectedEmployeeId(emp.id);
+                          setShowSettlementForm(true);
+                        }}
+                        className="absolute top-2 left-2 p-1.5 bg-white text-slate-400 hover:text-indigo-600 rounded-lg shadow-sm border border-slate-100 transition-all active:scale-95"
+                        title="إضافة تسوية"
+                     >
+                        <Plus size={14} />
+                     </button>
+                  </div>
+                  <div className="bg-indigo-50 bg-opacity-50 p-4 rounded-2xl border border-indigo-100 border-opacity-50 flex flex-col justify-center">
+                     <p className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest mb-1">بدلات الشهر</p>
+                     <p className="text-lg font-bold text-indigo-900">{isHidden ? '****' : formatCurrency(stats.allowances || 0)}</p>
+                  </div>
                   <div className="col-span-2 bg-slate-50 p-5 rounded-3xl border border-slate-200 mt-2 flex flex-col gap-4">
                      <div className="flex justify-between items-center">
                         <div className="flex items-center gap-3">
                            <div className="p-2 bg-amber-500 bg-opacity-10 rounded-lg">
                               <DollarSign className="text-amber-600" size={20} />
                            </div>
-                           <span className="font-bold text-slate-900">صافي المستحق</span>
+                           <span className="font-bold text-slate-900">صافي المستحق ( {["يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"][selectedMonth]} {selectedYear} )</span>
                         </div>
                         <span className="text-2xl font-bold text-amber-600 tabular-nums">{isHidden ? '****' : formatCurrency(stats.totalPayable || 0)}</span>
                      </div>
                      <div className="flex flex-col sm:flex-row justify-between items-center gap-4 pt-4 border-t border-slate-200">
-                        <p className="text-[9px] text-slate-400 font-bold leading-relaxed">الصافي = (الراتب + العمولات) - (السلف + خصومات البصمة)</p>
-                        <button 
-                          onClick={() => handlePaySalary(emp.id)}
-                          className="w-full sm:w-auto bg-indigo-600 text-white px-6 py-2 rounded-xl font-bold hover:bg-indigo-700 transition-all flex items-center justify-center gap-2 text-xs shadow-sm active:scale-95"
-                        >
-                          <Wallet size={14}/> صرف المستحقات
-                        </button>
+                        <p className="text-[9px] text-slate-400 font-bold leading-relaxed">الصافي = (الراتب + البدلات + العمولات + التسويات) - (السلف + خصومات البصمة)</p>
+                        <div className="flex gap-2 w-full sm:w-auto">
+                          {stats.isSalaryPaid && stats.isCommissionPaid && (
+                            <button 
+                              onClick={() => handleReopenMonth(emp.id)}
+                              className="px-4 py-2 rounded-xl font-bold transition-all flex items-center justify-center gap-2 text-xs shadow-sm active:scale-95 bg-rose-100 text-rose-600 hover:bg-rose-200"
+                              title="إعادة فتح الشهر"
+                            >
+                              <RotateCcw size={14}/>
+                            </button>
+                          )}
+                          <button 
+                            onClick={() => handlePaySalary(emp.id)}
+                            disabled={stats.isSalaryPaid && stats.isCommissionPaid}
+                            className={`flex-1 sm:flex-initial px-6 py-2 rounded-xl font-bold transition-all flex items-center justify-center gap-2 text-xs shadow-sm active:scale-95 ${stats.isSalaryPaid && stats.isCommissionPaid ? 'bg-slate-200 text-slate-500 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}
+                          >
+                            <Wallet size={14}/> {stats.isSalaryPaid && stats.isCommissionPaid ? 'تم إقفال الشهر' : 'صرف المستحقات'}
+                          </button>
+                        </div>
                      </div>
                   </div>
                </div>
@@ -1201,6 +1406,63 @@ const EmployeeView: React.FC<EmployeeViewProps> = ({
                         )}
                       </tbody>
                     </table>
+                  </div>
+
+                  {/* التسويات المالية */}
+                  <div className="pt-8 border-t border-slate-100">
+                    <div className="flex justify-between items-center mb-6">
+                      <h4 className="text-lg font-bold text-slate-900 flex items-center gap-3">
+                        <ArrowRightLeft className="text-indigo-600" /> التسويات المالية والمكافآت الاستثنائية
+                      </h4>
+                    </div>
+
+                    <div className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-sm">
+                      <table className="w-full text-right border-collapse">
+                        <thead>
+                          <tr className="bg-slate-900 text-white">
+                            <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-indigo-300">التاريخ</th>
+                            <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-indigo-300">البيان / السبب</th>
+                            <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-indigo-300">القيمة</th>
+                            <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-indigo-300">النوع</th>
+                            <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-indigo-300">إجراءات</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {(settlements || []).filter(s => s && s.employeeId === selectedEmp.id).sort((a,b) => b.date.localeCompare(a.date)).map(settle => (
+                            <tr key={settle.id} className="hover:bg-slate-50 transition-colors group">
+                              <td className="px-6 py-4 text-xs font-bold text-slate-500 tabular-nums">{settle.date}</td>
+                              <td className="px-6 py-4 font-bold text-slate-900">{settle.reason}</td>
+                              <td className={`px-6 py-4 font-bold tabular-nums ${settle.type === 'BONUS' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                {settle.type === 'BONUS' ? '+' : '-'}{formatCurrency(settle.amount)}
+                              </td>
+                              <td className="px-6 py-4">
+                                <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${settle.type === 'BONUS' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : 'bg-rose-50 text-rose-600 border border-rose-100'}`}>
+                                  {settle.type === 'BONUS' ? 'مكافأة' : 'خصم تسوية'}
+                                </span>
+                              </td>
+                              <td className="px-6 py-4">
+                                <button 
+                                  onClick={() => {
+                                    if (confirm('هل أنت متأكد من حذف هذه التسوية؟')) {
+                                      setSettlements(prev => (prev || []).filter(s => s && s.id !== settle.id));
+                                      addAuditLog('DELETE', 'SETTLEMENT', settle.id, `حذف تسوية للموظف: ${selectedEmp.name} بقيمة ${settle.amount}`);
+                                    }
+                                  }} 
+                                  className="p-2 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all"
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                          {(settlements || []).filter(s => s && s.employeeId === selectedEmp.id).length === 0 && (
+                            <tr>
+                              <td colSpan={5} className="px-6 py-12 text-center text-slate-400 font-bold italic">لا توجد تسويات مسجلة</td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 </div>
               )}
@@ -1501,9 +1763,19 @@ const EmployeeView: React.FC<EmployeeViewProps> = ({
                       <span className="text-rose-400">- خصم البصمة:</span>
                       <span className="font-bold text-rose-400">{formatCurrency(paymentFormData.deductions)}</span>
                     </div>
+                    {paymentFormData.settlements !== 0 && (
+                      <div className="flex justify-between items-center text-sm">
+                        <span className={paymentFormData.settlements > 0 ? "text-emerald-400" : "text-rose-400"}>
+                          {paymentFormData.settlements > 0 ? "+ تسويات (إضافة):" : "- تسويات (خصم):"}
+                        </span>
+                        <span className={`font-bold ${paymentFormData.settlements > 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                          {formatCurrency(Math.abs(paymentFormData.settlements))}
+                        </span>
+                      </div>
+                    )}
                   </>
                 )}
-                <div className="flex justify-between items-center pt-4 border-t border-slate-800">
+                <div className="flex justify-between items-center pt-4 border-b border-slate-800">
                   <span className="text-slate-400 font-bold">العمولات المستحقة:</span>
                   <span className={`font-bold ${!paymentFormData.payCommission ? 'line-through text-slate-600' : 'text-white'}`}>
                     {formatCurrency(paymentFormData.commissionAmount)}
@@ -1514,7 +1786,7 @@ const EmployeeView: React.FC<EmployeeViewProps> = ({
                   <span className="text-lg font-bold text-indigo-400 uppercase tracking-widest">الصافي للدفع</span>
                   <span className="text-3xl font-black text-white">
                     {formatCurrency(
-                      (paymentFormData.paySalary ? (paymentFormData.salaryAmount + paymentFormData.allowances - paymentFormData.advances - paymentFormData.deductions) : 0) +
+                      (paymentFormData.paySalary ? (paymentFormData.salaryAmount + paymentFormData.allowances + paymentFormData.settlements - paymentFormData.advances - paymentFormData.deductions) : 0) +
                       (paymentFormData.payCommission ? paymentFormData.commissionAmount : 0)
                     )}
                   </span>
@@ -1534,6 +1806,91 @@ const EmployeeView: React.FC<EmployeeViewProps> = ({
                   className="bg-indigo-600 text-white px-12 py-3 rounded-2xl font-bold text-sm hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200 active:scale-95"
                 >
                   تأكيد وصرف المستحقات
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+      {showSettlementForm && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[110] p-4 no-print animate-in fade-in duration-300">
+          <div className="bg-white w-full max-w-lg rounded-[32px] shadow-2xl overflow-hidden border border-slate-200">
+            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-indigo-600 text-white rounded-xl flex items-center justify-center shadow-lg">
+                  <Plus size={20} />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900">إضافة تسوية مالية</h3>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">{selectedEmp?.name}</p>
+                </div>
+              </div>
+              <button onClick={() => setShowSettlementForm(false)} className="text-slate-400 hover:text-rose-500 transition-all p-2 bg-white rounded-xl shadow-sm border border-slate-100">
+                <X size={20} />
+              </button>
+            </div>
+            
+            <form onSubmit={handleSettlementSubmit} className="p-6 space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-[10px] font-bold uppercase tracking-widest text-slate-400 ml-1">نوع التسوية</label>
+                  <select 
+                    name="type"
+                    required
+                    className="p-3 bg-slate-50 border border-slate-200 rounded-xl focus:border-indigo-600 outline-none font-bold text-sm"
+                  >
+                    <option value="BONUS">مكافأة / إضافة (+)</option>
+                    <option value="DEDUCTION">خصم / تسوية (-)</option>
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-[10px] font-bold uppercase tracking-widest text-slate-400 ml-1">المبلغ</label>
+                  <input 
+                    name="amount"
+                    type="number"
+                    step="0.01"
+                    required
+                    className="p-3 bg-slate-50 border border-slate-200 rounded-xl focus:border-indigo-600 outline-none font-bold text-sm"
+                    placeholder="0.00"
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[10px] font-bold uppercase tracking-widest text-slate-400 ml-1">التاريخ</label>
+                <input 
+                  name="date"
+                  type="date"
+                  required
+                  defaultValue={new Date().toISOString().split('T')[0]}
+                  className="p-3 bg-slate-50 border border-slate-200 rounded-xl focus:border-indigo-600 outline-none font-bold text-sm"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[10px] font-bold uppercase tracking-widest text-slate-400 ml-1">السبب / البيان</label>
+                <textarea 
+                  name="reason"
+                  required
+                  rows={3}
+                  className="p-3 bg-slate-50 border border-slate-200 rounded-xl focus:border-indigo-600 outline-none font-bold text-sm resize-none"
+                  placeholder="مثال: مكافأة الأداء المتميز أو خصم غياب بدون عذر"
+                ></textarea>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-4">
+                <button 
+                  type="button" 
+                  onClick={() => setShowSettlementForm(false)}
+                  className="px-6 py-2.5 text-slate-400 font-bold text-xs hover:text-rose-600 transition-colors"
+                >
+                  إلغاء
+                </button>
+                <button 
+                  type="submit"
+                  className="bg-indigo-600 text-white px-8 py-2.5 rounded-xl font-bold text-xs hover:bg-indigo-700 transition-all shadow-lg active:scale-95"
+                >
+                  حفظ التسوية
                 </button>
               </div>
             </form>

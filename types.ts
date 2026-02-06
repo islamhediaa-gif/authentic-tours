@@ -86,6 +86,8 @@ export interface Employee {
   departmentId?: string;
   designationId?: string;
   leaveBalance?: number;
+  paidSalaries?: string[]; // Array of "YYYY-MM"
+  paidCommissions?: string[]; // Array of "YYYY-MM"
 }
 
 export interface Department {
@@ -125,6 +127,15 @@ export interface EmployeeDocument {
   type: string; 
   expiryDate?: string;
   filePath?: string;
+}
+
+export interface EmployeeSettlement {
+  id: string;
+  employeeId: string;
+  amount: number;
+  type: 'BONUS' | 'DEDUCTION';
+  reason: string;
+  date: string;
 }
 
 export interface Shift {
@@ -467,7 +478,7 @@ export interface AuditLog {
   userId: string;
   userName: string;
   action: 'CREATE' | 'UPDATE' | 'DELETE' | 'VOID' | 'LOGIN' | 'EXPORT';
-  entityType: 'TRANSACTION' | 'JOURNAL_ENTRY' | 'CUSTOMER' | 'SUPPLIER' | 'TREASURY' | 'EMPLOYEE' | 'SETTINGS' | 'MASTER_TRIP' | 'LEAVE' | 'ALLOWANCE' | 'DOCUMENT' | 'DEPARTMENT' | 'DESIGNATION';
+  entityType: 'TRANSACTION' | 'JOURNAL_ENTRY' | 'CUSTOMER' | 'SUPPLIER' | 'TREASURY' | 'EMPLOYEE' | 'SETTINGS' | 'MASTER_TRIP' | 'LEAVE' | 'ALLOWANCE' | 'DOCUMENT' | 'DEPARTMENT' | 'DESIGNATION' | 'SETTLEMENT';
   entityId: string;
   details: string;
   oldValue?: string;
@@ -522,6 +533,7 @@ export interface CompanyData {
   leaves: EmployeeLeave[];
   allowances: EmployeeAllowance[];
   documents: EmployeeDocument[];
+  settlements: EmployeeSettlement[];
   auditLogs: AuditLog[];
   masterTrips: MasterTrip[];
   settings: CompanySettings;

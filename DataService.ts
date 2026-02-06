@@ -8,8 +8,8 @@ import { mapKeysToCamel } from './utils/caseConversion';
 // اختيار الخدمة السحابية بناءً على المستأجر (Hybrid Cloud Logic)
 export const getCloudService = () => {
   const tenantId = getTenantId();
-  // authentic يذهب دائماً إلى Railway، الباقي يذهب إلى Supabase
-  return (tenantId === 'authentic') ? RailwayService : SupabaseService;
+  // استخدام Railway كخدمة أساسية لضمان استقرار البيانات المرفوعة على MySQL
+  return RailwayService;
 };
 
 const isUsingRailway = () => getCloudService() === RailwayService;
@@ -20,9 +20,9 @@ const isElectron = typeof window !== 'undefined' && (
 );
 
 // إعداد IndexedDB
-const DB_NAME = 'NebrasDB';
-const STORE_NAME = 'enterprise_data';
-const DB_VERSION = 10; // رفع الإصدار لتصفير الذاكرة المحلية وإجبار سحب البيانات المصلحة من السحاب
+const DB_NAME = 'NebrasDB_v16';
+const STORE_NAME = 'enterprise_data_v16';
+const DB_VERSION = 16; 
 
 const openDB = (): Promise<IDBDatabase> => {
   return new Promise((resolve, reject) => {
@@ -109,6 +109,10 @@ export const DataService = {
 
   getDashboardSummary: async (tenantId: string) => {
     const service = getCloudService();
+    // تعطيل الـ RPC مؤقتاً لضمان عدم توقف اللوحة الرئيسية حتى إنشاء الـ Function على Supabase
+    if (tenantId === 'authentic') {
+        return { success: false, error: "Local calculation preferred for now" };
+    }
     if ((service as any).getDashboardSummary) {
       return await (service as any).getDashboardSummary(tenantId);
     }
@@ -227,101 +231,73 @@ export const DataService = {
 
     const loadRelationalAndReturn = async () => {
       try {
-        // جلب النسخة الاحتياطية السريعة أولاً لتكون أساساً للبيانات
-        cloudRes = await fetchCloudBackup();
+        console.log(`[DataService] Performing Relational Sync from Supabase for ${tenantId}...`);
         
-        console.log(`[DataService] Loading all relational data for ${tenantId} in parallel...`);
-        const criticalTables = ['tenant_settings', 'users', 'currencies'];
-        const essentialTables = ['customers', 'suppliers', 'transactions', 'journal_entries', 'journal_lines', 'treasuries', 'programs'];
-        const optionalTables = ['partners', 'employees', 'cost_centers', 'departments', 'designations', 'attendance_logs', 'shifts', 'employee_leaves', 'employee_allowances', 'employee_documents', 'audit_logs', 'master_trips'];
+        const tableMapping: Record<string, string> = {
+            'transactions': 'transactions',
+            'journal_entries': 'journalEntries',
+            'journal_lines': 'journal_lines',
+            'customers': 'customers',
+            'suppliers': 'suppliers',
+            'partners': 'partners',
+            'employees': 'employees',
+            'treasuries': 'treasuries',
+            'currencies': 'currencies',
+            'cost_centers': 'costCenters',
+            'departments': 'departments',
+            'designations': 'designations',
+            'users': 'users',
+            'programs': 'programs',
+            'master_trips': 'masterTrips',
+            'attendance_logs': 'attendanceLogs',
+            'audit_logs': 'auditLogs',
+            'shifts': 'shifts',
+            'employee_leaves': 'leaves',
+            'employee_allowances': 'allowances',
+            'employee_documents': 'documents',
+            'employee_settlements': 'settlements',
+            'tenant_settings': 'settings'
+        };
 
-        const allTables = [...criticalTables, ...essentialTables, ...optionalTables];
-        
-        // Parallel fetching
-        const fetchPromises = allTables.map(async (table) => {
-            try {
-                const isOptional = optionalTables.includes(table);
-                const isCritical = criticalTables.includes(table);
-                const isVeryLarge = table === 'journal_lines' || table === 'transactions' || table === 'journal_entries';
-                const timeoutLimit = isVeryLarge ? 40000 : (isCritical ? 15000 : (isOptional ? 10000 : 15000)); 
-                
-                const tablePromise = getCloudService().fetchTenantData(table, tenantId);
-                const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error(`Timeout fetching ${table}`)), timeoutLimit + 1000));
-                
-                return await Promise.race([tablePromise, timeoutPromise]) as any;
-            } catch (err) {
-                console.error(`[DataService] Error fetching ${table}:`, err);
-                return { success: false, error: 'Timeout' };
-            }
-        });
-
-        const results = await Promise.all(fetchPromises);
-
-        const mergedData: CompanyData = { ...(cloudRes.data || {}) };
+        const tablesToFetch = Object.keys(tableMapping);
+        const mergedData: CompanyData = { lastUpdated: new Date().toISOString() };
         let hasRealCloudData = false;
 
-        results.forEach((res, index) => {
-            const tableName = allTables[index];
-            let fieldName: string = tableName;
-            if (tableName === 'journal_entries') fieldName = 'journalEntries';
-            if (tableName === 'transactions') fieldName = 'transactions';
-            if (tableName === 'cost_centers') fieldName = 'costCenters';
-            if (tableName === 'attendance_logs') fieldName = 'attendanceLogs';
-            if (tableName === 'employee_leaves') fieldName = 'leaves';
-            if (tableName === 'employee_allowances') fieldName = 'allowances';
-            if (tableName === 'employee_documents') fieldName = 'documents';
-            if (tableName === 'audit_logs') fieldName = 'auditLogs';
-            if (tableName === 'tenant_settings') fieldName = 'settings';
-            if (tableName === 'master_trips') fieldName = 'masterTrips';
-
-            if (res.success && res.data) {
-                let mappedData = res.data;
-                if (Array.isArray(mappedData)) {
-                    if (mappedData.length > 0) hasRealCloudData = true;
-                    mappedData = mappedData.filter(Boolean).map((item: any) => {
-                        const cammled = mapKeysToCamel(item);
-                        // Fix for tenant_settings mapping to CompanySettings type
-                        if (tableName === 'tenant_settings') {
-                            return {
-                                ...cammled,
-                                name: cammled?.companyName || cammled?.name || 'نِـبـراس ERP',
-                                logo: cammled?.logoUrl || cammled?.logo || ''
-                            };
-                        }
-                        return cammled;
-                    });
-                }
+        // Fetch all tables from the cloud service in parallel
+        await Promise.all(tablesToFetch.map(async (dbTable) => {
+            const fieldName = tableMapping[dbTable];
+            const res = await getCloudService().fetchTenantData(dbTable, tenantId);
+            
+            if (res.success && Array.isArray(res.data)) {
+                if (res.data.length > 0) hasRealCloudData = true;
                 
-                // Nuclear fix for authentic: Do NOT merge with old local data if cloud data exists
+                const mappedData = res.data.map((item: any) => {
+                    if (dbTable === 'tenant_settings') {
+                        return {
+                            ...item,
+                            name: item?.companyName || item?.name || 'نِـبـراس ERP',
+                            logo: item?.logoUrl || item?.logo || ''
+                        };
+                    }
+                    return item;
+                });
+
                 if (tenantId === 'authentic') {
-                    (mergedData as any)[fieldName] = (tableName === 'tenant_settings') 
+                    (mergedData as any)[fieldName] = (dbTable === 'tenant_settings') 
                         ? (mappedData && mappedData.length > 0 ? mappedData[0] : {})
                         : mappedData;
-                    if (tableName === 'journal_lines') (mergedData as any)._allJournalLines = mappedData;
+                    if (dbTable === 'journal_lines') (mergedData as any)._allJournalLines = mappedData;
                 } else {
-                    // Original merge logic for other tenants
-                    if (tableName === 'journal_entries') (mergedData as any).journalEntries = mappedData;
-                    else if (tableName === 'journal_lines') (mergedData as any)._allJournalLines = mappedData;
-                    else if (tableName === 'tenant_settings') (mergedData as any)[fieldName] = mappedData && mappedData.length > 0 ? mappedData[0] : (mergedData.settings || {});
+                    if (dbTable === 'journal_entries') (mergedData as any).journalEntries = mappedData;
+                    else if (dbTable === 'journal_lines') (mergedData as any)._allJournalLines = mappedData;
+                    else if (dbTable === 'tenant_settings') (mergedData as any)[fieldName] = mappedData && mappedData.length > 0 ? mappedData[0] : {};
                     else (mergedData as any)[fieldName] = mappedData;
                 }
-            } else {
-                // حماية: إذا فشل جلب جدول معين من السحاب، نحتفظ بالبيانات المحلية لهذا الجدول ولا نمسحها
-                console.warn(`[DataService] Cloud fetch failed for ${tableName}, preserving local data if available.`);
-                if (localData && localData[fieldName]) {
-                    (mergedData as any)[fieldName] = localData[fieldName];
-                    if (tableName === 'journal_lines' && localData._allJournalLines) {
-                        (mergedData as any)._allJournalLines = localData._allJournalLines;
-                    }
-                } else if (!(mergedData as any)[fieldName]) {
-                    (mergedData as any)[fieldName] = fieldName === 'settings' ? {} : [];
-                }
             }
-        });
+        }));
 
-        // إذا لم نجد بيانات حقيقية في السحاب، نعتمد على البيانات المحلية ولا نستبدلها ببيانات فارغة
         if (!hasRealCloudData && localData) {
-            console.log("[DataService] Cloud fetch returned no relational records, keeping local data.");
+            console.log("[DataService] No data found in cloud tables, using local backup if available");
             return localData;
         }
 
@@ -334,14 +310,10 @@ export const DataService = {
             delete (mergedData as any)._allJournalLines;
         }
         
-        if (hasRealCloudData) {
-            mergedData.lastUpdated = new Date().toISOString();
-        }
-        
         return mergedData;
       } catch (e) {
         console.error("Relational load failed", e);
-        return cloudRes.data || localData;
+        return localData || { lastUpdated: new Date().toISOString() };
       }
     };
 
@@ -364,6 +336,12 @@ export const DataService = {
   },
 
   saveData: async (data: CompanyData, sessionId?: string, onlyLocal = false, force = false) => {
+    // ALLOW SAVING FOR AUTHENTIC TENANT
+    const tenantId = getTenantId();
+    if (tenantId === 'authentic' && force) {
+        console.log("[DataService] Force saving enabled for authentic tenant.");
+    }
+
     // تحديث الطابع الزمني لضمان أن هذه النسخة هي الأحدث والأولوية لها في المزامنة
     if (!data.lastUpdated) {
       data.lastUpdated = new Date().toISOString();
@@ -375,7 +353,8 @@ export const DataService = {
     
     // We only block cloud saving if it's empty AND we are NOT in a fresh setup state
     // If force is true, we bypass the guard (used after intentional Nuclear Wipe)
-    if (!onlyLocal && !force && txCount === 0 && jeCount === 0) {
+    // IMPORTANT: Never block the authentic tenant from saving real data
+    if (!onlyLocal && !force && txCount === 0 && jeCount === 0 && tenantId !== 'authentic') {
        // Check if cloud relational tables actually HAVE data before blocking. 
        // We check transactions table as the primary indicator of real data.
        const tenantId = getTenantId();
@@ -451,10 +430,10 @@ export const DataService = {
     try {
       const tenantId = getTenantId();
       
-      // 0. تحديث كاش قاعدة البيانات لضمان التعرف على الأعمدة الجديدة (فقط لـ Supabase)
-      if (!isUsingRailway()) {
-        await (SupabaseService as any).reloadSchema();
-        // إضافة تأخير بسيط لإعطاء Supabase فرصة لتحديث الكاش داخلياً
+      // 0. تحديث كاش قاعدة البيانات لضمان التعرف على الأعمدة الجديدة
+      if ((getCloudService() as any).reloadSchema) {
+        await (getCloudService() as any).reloadSchema();
+        // إضافة تأخير بسيط لإعطاء السيرفر فرصة لتحديث الكاش داخلياً
         await new Promise(resolve => setTimeout(resolve, 1500));
       }
 
@@ -490,12 +469,14 @@ export const DataService = {
         await syncTable('designations', data.designations || []);
         await syncTable('users', data.users || []);
         await syncTable('master_trips', data.masterTrips || []);
+        await syncTable('programs', data.programs || []);
         await syncTable('attendance_logs', data.attendanceLogs || [], 50);
         await syncTable('audit_logs', data.auditLogs || [], 50);
         await syncTable('shifts', data.shifts || []);
         await syncTable('employee_leaves', data.leaves || []);
         await syncTable('employee_allowances', data.allowances || []);
         await syncTable('employee_documents', data.documents || []);
+        await syncTable('employee_settlements', (data as any).settlements || []);
         
         if (data.journalEntries) {
             // Extract all journal lines to ensure full sync even with duplicate JE IDs
@@ -545,6 +526,8 @@ export const DataService = {
       delete (cloudData as any).departments;
       delete (cloudData as any).designations;
       delete (cloudData as any).masterTrips;
+      delete (cloudData as any).programs;
+      delete (cloudData as any).settlements;
       delete (cloudData as any).settings;
       
       const cloudRes = await getCloudService().saveFullBackup(tenantId, cloudData as any);

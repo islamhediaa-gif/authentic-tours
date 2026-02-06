@@ -50,22 +50,6 @@ const dbConfig = process.env.MYSQL_URL || process.env.MYSQL_PUBLIC_URL || {
   port: process.env.MYSQLPORT || 36607,
 };
 
-const columnCache = {};
-const getTableColumns = async (table) => {
-  if (columnCache[table]) return columnCache[table];
-  try {
-    const [cols] = await pool.query(`SHOW COLUMNS FROM ??`, [table]);
-    const names = cols.map(c => c.Field);
-    columnCache[table] = names;
-    return names;
-  } catch (err) {
-    console.warn(`Could not fetch columns for ${table}:`, err.message);
-    return null;
-  }
-};
-
-console.log(`Connecting to database at ${typeof dbConfig === 'string' ? 'MYSQL_URL' : dbConfig.host + ':' + dbConfig.port}`);
-
 const pool = (typeof dbConfig === 'string') 
   ? mysql.createPool({ uri: dbConfig, connectTimeout: 30000 })
   : mysql.createPool({
@@ -75,6 +59,36 @@ const pool = (typeof dbConfig === 'string')
       queueLimit: 0,
       connectTimeout: 30000
     });
+
+// Single Big Fetch Endpoint for high reliability
+app.get('/api/data-all', async (req, res) => {
+  try {
+    const { tenant_id } = req.query;
+    console.log(`🚀 [Data All] High-speed fetch for tenant: ${tenant_id}`);
+    if (!tenant_id) throw new Error('Missing tenant_id');
+
+    const tables = [
+      'transactions', 'journal_lines', 'journal_entries', 'customers', 
+      'suppliers', 'partners', 'employees', 'treasuries', 'currencies', 
+      'cost_centers', 'departments', 'designations', 'attendance_logs', 
+      'shifts', 'employee_leaves', 'employee_allowances', 
+      'employee_documents', 'audit_logs', 'tenant_settings', 'master_trips', 'users', 'programs'
+    ];
+
+    const allData = {};
+    for (const table of tables) {
+      const sql = mysqlLib.format(`SELECT * FROM ?? WHERE tenant_id = ?`, [table, tenant_id]);
+      const [rows] = await pool.query(sql);
+      allData[table] = rows;
+    }
+
+    console.log(`✅ [Data All] Sent all data for ${tenant_id}`);
+    res.json({ success: true, data: allData });
+  } catch (error) {
+    console.error(`❌ [Data All] Failed:`, error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
 
 // إنشاء الجداول وتحديث الهيكل إذا لم تكن موجودة
 const initDB = async () => {
@@ -174,6 +188,7 @@ app.post('/api/admin/super-restore', async (req, res) => {
     };
 
     const results = {};
+    const allJournalLines = [];
 
     for (const [key, tableName] of Object.entries(tablesMap)) {
       let records = data[key];
@@ -185,52 +200,40 @@ app.post('/api/admin/super-restore', async (req, res) => {
 
       // Special handling for journal lines if key is journalEntries
       if (key === 'journalEntries') {
-          const allLines = [];
           records.forEach((entry, eIdx) => {
               if (entry.lines && Array.isArray(entry.lines)) {
                   entry.lines.forEach((line, lIdx) => {
                       const l = toSnake(line);
                       l.tenant_id = tenant_id;
-                      l.journal_entry_id = entry.id; // Preserve Entry ID
+                      l.journal_entry_id = entry.id; 
                       
-                      // Also preserve Trip/Program from parent entry if not on line
                       if (!l.trip_id && entry.tripId) l.trip_id = entry.tripId;
                       if (!l.program_id && entry.programId) l.program_id = entry.programId;
                       
                       if (!l.id) l.id = `L_${entry.id}_${lIdx}`;
-                      allLines.push(l);
+                      allJournalLines.push(l);
                   });
               }
           });
-          if (allLines.length > 0) {
-              await bulkUpsert('journal_lines', allLines, tenant_id);
-              results['journal_lines'] = allLines.length;
-          }
       }
 
-      // Special handling for transactions to extract journal lines if they exist there too
+      // Special handling for transactions to extract journal lines
       if (key === 'transactions') {
-          const allLines = [];
           records.forEach((tx, tIdx) => {
               if (tx.journalLines && Array.isArray(tx.journalLines)) {
                   tx.journalLines.forEach((line, lIdx) => {
                       const l = toSnake(line);
                       l.tenant_id = tenant_id;
-                      l.transaction_id = tx.id; // Link to Transaction
+                      l.transaction_id = tx.id;
                       
-                      // Inherit trip/program from tx
                       if (!l.trip_id && tx.tripId) l.trip_id = tx.tripId;
                       if (!l.program_id && tx.programId) l.program_id = tx.programId;
                       
                       if (!l.id) l.id = `TX_L_${tx.id}_${lIdx}`;
-                      allLines.push(l);
+                      allJournalLines.push(l);
                   });
               }
           });
-          if (allLines.length > 0) {
-              await bulkUpsert('journal_lines', allLines, tenant_id);
-              results['journal_lines_from_tx'] = allLines.length;
-          }
       }
 
       // Prepare records for the table
@@ -238,8 +241,8 @@ app.post('/api/admin/super-restore', async (req, res) => {
           const s = toSnake(r);
           s.tenant_id = tenant_id;
           if (tableName === 'journal_entries') delete s.lines;
+          if (tableName === 'transactions') delete s.journalLines;
           
-          // Specific fix for tenant_settings
           if (tableName === 'tenant_settings') {
               if (!s.company_name && r.name) s.company_name = r.name;
               if (r.logo && !s.logo_url) s.logo_url = r.logo;
@@ -250,6 +253,13 @@ app.post('/api/admin/super-restore', async (req, res) => {
 
       await bulkUpsert(tableName, processed, tenant_id);
       results[tableName] = processed.length;
+    }
+
+    // Final bulk upsert for ALL journal lines
+    if (allJournalLines.length > 0) {
+        console.log(`📝 [Super Restore] Upserting total ${allJournalLines.length} journal lines...`);
+        await bulkUpsert('journal_lines', allJournalLines, tenant_id);
+        results['journal_lines_total'] = allJournalLines.length;
     }
 
     res.json({ success: true, results });

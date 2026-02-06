@@ -38,6 +38,13 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [cloudStats, setCloudStats] = useState<any>(null);
   const [loadingCloud, setLoadingCloud] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
+  const [chartReady, setChartReady] = useState(false);
+
+  useEffect(() => {
+    // إعطاء المتصفح وقتاً كافياً لحساب أبعاد الحاويات (Flexbox/Grid)
+    const timer = setTimeout(() => setChartReady(true), 1000);
+    return () => clearTimeout(timer);
+  }, []);
 
   const handleForceSync = async () => {
     if (!confirm('سيتم إجبار النظام على رفع الحالة الحالية للسحاب حتى لو كانت فارغة. هل تريد الاستمرار؟')) return;
@@ -331,12 +338,22 @@ const Dashboard: React.FC<DashboardProps> = ({
   const COLORS = ['#4f46e5', '#10b981', '#f43f5e', '#6366f1', '#8b5cf6'];
 
   const cloudStatsDisplay = useMemo(() => {
+    // الأولوية لبيانات السحاب المحسوبة جاهزاً من السيرفر لضمان الدقة في نسخة الويب
+    if (cloudStats) {
+      return {
+        total_cash: cloudStats.total_cash ?? cloudStats.totalCash ?? stats.cashOnHand,
+        customer_debts: cloudStats.customer_debts ?? cloudStats.customerDebts ?? stats.totalReceivables,
+        supplier_credits: cloudStats.supplier_credits ?? cloudStats.supplierCredits ?? stats.totalSupplierDebts
+      };
+    }
+    
+    // Fallback للبيانات المحلية في حال فشل جلب الملخص
     return {
       total_cash: stats.cashOnHand,
       customer_debts: stats.totalReceivables,
       supplier_credits: stats.totalSupplierDebts
     };
-  }, [stats]);
+  }, [stats, cloudStats]);
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-6 duration-1000">
@@ -448,28 +465,34 @@ const Dashboard: React.FC<DashboardProps> = ({
                </div>
             </div>
           </div>
-          <div className="h-96">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={chartData}>
-                <defs>
-                  <linearGradient id="colorInc" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.2}/>
-                    <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 11, fontWeight: 700}} />
-                <YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 11, fontWeight: 700}} />
-                <Tooltip 
-                  contentStyle={{borderRadius: '1.5rem', border: 'none', boxShadow: '0 20px 40px rgba(0,0,0,0.08)', padding: '16px'}} 
-                  itemStyle={{fontWeight: 700, fontSize: '13px'}}
-                  cursor={{stroke: '#e2e8f0', strokeWidth: 2}}
-                  formatter={(value: any) => shouldMaskAggregate ? '****' : (value || 0).toLocaleString() || '0'}
-                />
-                <Area type="monotone" dataKey="income" stroke="#10b981" strokeWidth={6} fillOpacity={1} fill="url(#colorInc)" />
-                <Area type="monotone" dataKey="expense" stroke="#ef4444" strokeWidth={4} strokeDasharray="8 8" fill="transparent" />
-              </AreaChart>
-            </ResponsiveContainer>
+          <div className="h-96 w-full mt-4" id="main-chart-container">
+            {chartReady ? (
+              <ResponsiveContainer width="100%" height="100%" debounce={50}>
+                <AreaChart data={chartData}>
+                  <defs>
+                    <linearGradient id="colorInc" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#10b981" stopOpacity={0.2}/>
+                      <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 11, fontWeight: 700}} />
+                  <YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 11, fontWeight: 700}} />
+                  <Tooltip 
+                    contentStyle={{borderRadius: '1.5rem', border: 'none', boxShadow: '0 20px 40px rgba(0,0,0,0.08)', padding: '16px'}} 
+                    itemStyle={{fontWeight: 700, fontSize: '13px'}}
+                    cursor={{stroke: '#e2e8f0', strokeWidth: 2}}
+                    formatter={(value: any) => shouldMaskAggregate ? '****' : (value || 0).toLocaleString() || '0'}
+                  />
+                  <Area type="monotone" dataKey="income" stroke="#10b981" strokeWidth={6} fillOpacity={1} fill="url(#colorInc)" />
+                  <Area type="monotone" dataKey="expense" stroke="#ef4444" strokeWidth={4} strokeDasharray="8 8" fill="transparent" />
+                </AreaChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="w-full h-full flex items-center justify-center bg-slate-50 rounded-3xl border border-dashed border-slate-200">
+                <RefreshCw className="text-indigo-600 animate-spin" size={32} />
+              </div>
+            )}
           </div>
         </div>
 
@@ -478,20 +501,26 @@ const Dashboard: React.FC<DashboardProps> = ({
           <h3 className="text-xl font-bold text-slate-900 mb-8 flex items-center gap-3">
             <PieIcon size={24} className="text-indigo-600" /> توزيع المحفظة
           </h3>
-          <div className="flex-1 h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie data={treasuryDistribution} innerRadius={65} outerRadius={85} paddingAngle={8} dataKey="value" stroke="none" cornerRadius={8}>
-                  {treasuryDistribution.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]}/>
-                  ))}
-                </Pie>
-                <Tooltip 
-                  contentStyle={{ borderRadius: '1.5rem', border: 'none', boxShadow: '0 20px 40px rgba(0,0,0,0.08)' }} 
-                  formatter={(value: any) => shouldMaskAggregate ? '****' : (value || 0).toLocaleString() || '0'}
-                />
-              </PieChart>
-            </ResponsiveContainer>
+          <div className="flex-1 h-64 mt-4" id="portfolio-pie-chart">
+            {chartReady ? (
+              <ResponsiveContainer width="100%" height="100%" debounce={50}>
+                <PieChart>
+                  <Pie data={treasuryDistribution} innerRadius={65} outerRadius={85} paddingAngle={8} dataKey="value" stroke="none" cornerRadius={8}>
+                    {treasuryDistribution.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]}/>
+                    ))}
+                  </Pie>
+                  <Tooltip 
+                    contentStyle={{ borderRadius: '1.5rem', border: 'none', boxShadow: '0 20px 40px rgba(0,0,0,0.08)' }} 
+                    formatter={(value: any) => shouldMaskAggregate ? '****' : (value || 0).toLocaleString() || '0'}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="w-full h-full flex items-center justify-center bg-slate-50 rounded-full border border-dashed border-slate-200">
+                <RefreshCw className="text-indigo-400 animate-spin" size={24} />
+              </div>
+            )}
           </div>
           <div className="mt-8 space-y-3">
              {treasuryDistribution.map((t, i) => (
@@ -512,20 +541,26 @@ const Dashboard: React.FC<DashboardProps> = ({
             <h3 className="text-xl font-bold text-slate-900 mb-8 flex items-center gap-3">
               <ShieldCheck size={24} className="text-indigo-600" /> هيكل حقوق الملكية
             </h3>
-            <div className="flex-1 h-64">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie data={equityDistribution} innerRadius={65} outerRadius={85} paddingAngle={8} dataKey="value" stroke="none" cornerRadius={8}>
-                    {equityDistribution.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[(index + 2) % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip 
-                    contentStyle={{ borderRadius: '1.5rem', border: 'none', boxShadow: '0 20px 40px rgba(0,0,0,0.08)' }} 
-                    formatter={(value: any) => shouldMaskAggregate ? '****' : (value || 0).toLocaleString() || '0'}
-                  />
-                </PieChart>
-              </ResponsiveContainer>
+            <div className="flex-1 h-64 mt-4" id="equity-pie-chart">
+              {chartReady ? (
+                <ResponsiveContainer width="100%" height="100%" debounce={50}>
+                  <PieChart>
+                    <Pie data={equityDistribution} innerRadius={65} outerRadius={85} paddingAngle={8} dataKey="value" stroke="none" cornerRadius={8}>
+                      {equityDistribution.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={COLORS[(index + 2) % COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip 
+                      contentStyle={{ borderRadius: '1.5rem', border: 'none', boxShadow: '0 20px 40px rgba(0,0,0,0.08)' }} 
+                      formatter={(value: any) => shouldMaskAggregate ? '****' : (value || 0).toLocaleString() || '0'}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="w-full h-full flex items-center justify-center bg-slate-50 rounded-full border border-dashed border-slate-200">
+                  <RefreshCw className="text-indigo-400 animate-spin" size={24} />
+                </div>
+              )}
             </div>
             <div className="mt-8 space-y-3">
                {equityDistribution.map((p, i) => (

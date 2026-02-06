@@ -44,12 +44,15 @@ export const RailwayService = {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 120000); // 120 seconds timeout
 
-      const response = await fetch(`${API_URL}/api/data/${tableName}?tenant_id=${tenantId}`, {
+      // إضافة limit=100000 لضمان جلب كافة البيانات لشركة authentic الضخمة
+      const response = await fetch(`${API_URL}/api/data/${tableName}?tenant_id=${tenantId}&limit=100000`, {
         signal: controller.signal
       });
       clearTimeout(timeoutId);
       const res = await response.json();
+      
       if (res.success && res.data) {
+        console.log(`[RailwayService] Fetched ${res.data.length} records for ${tableName}`);
         res.data = sanitizeData(res.data);
       }
       return res;
@@ -104,13 +107,21 @@ export const RailwayService = {
 
   loadFullBackup: async (userId: string) => {
     try {
-      const response = await fetch(`${API_URL}/api/backup/load/${userId}`);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 seconds timeout
+
+      const response = await fetch(`${API_URL}/api/backup/load/${userId}`, {
+        signal: controller.signal
+      });
+      
+      clearTimeout(timeoutId);
       const res = await response.json();
       if (res.success && res.data) {
         res.data = sanitizeData(res.data);
       }
       return res;
     } catch (error: any) {
+      console.error(`[RailwayService] Load Backup Error:`, error.message);
       return { success: false, error: error.message };
     }
   },

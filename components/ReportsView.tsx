@@ -150,11 +150,15 @@ const ReportsView: React.FC<ReportsViewProps> = ({
   }, [transactions, effectiveFromDate, effectiveToDate, selectedCostCenterId]);
 
   const filteredJournalEntries = useMemo(() => {
-    if (selectedCostCenterId === 'ALL') return (journalEntries || []);
-    return (journalEntries || []).map(entry => ({
-      ...entry,
-      lines: (entry.lines || []).filter(line => (line.costCenterId || 'GENERAL') === selectedCostCenterId)
-    })).filter(entry => (entry.lines || []).length > 0);
+    const jes = Array.isArray(journalEntries) ? journalEntries : [];
+    if (selectedCostCenterId === 'ALL') return jes;
+    return jes.map(entry => {
+      const lines = Array.isArray(entry.lines) ? entry.lines : [];
+      return {
+        ...entry,
+        lines: lines.filter(line => (line.costCenterId || 'GENERAL') === selectedCostCenterId)
+      };
+    }).filter(entry => (Array.isArray(entry.lines) ? entry.lines : []).length > 0);
   }, [journalEntries, selectedCostCenterId]);
 
   const filteredCustomers = useMemo(() => {

@@ -81,17 +81,24 @@ const ExpenseView: React.FC<ExpenseViewProps> = ({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
 
-  const filtered = (transactions || [])
-    .filter(t => t?.category === 'EXPENSE_GEN' || t?.category === 'DOUBTFUL_DEBT')
-    .filter(t => {
-      if (!searchTerm) return true;
-      const s = searchTerm.toLowerCase();
-      return (
-        (t?.description || '').toLowerCase().includes(s) ||
-        (t?.refNo || '').toLowerCase().includes(s) ||
-        (t?.expenseCategory || '').toLowerCase().includes(s)
-      );
-    });
+  const filtered = useMemo(() => {
+    return (transactions || [])
+      .filter(t => t?.category === 'EXPENSE_GEN' || t?.category === 'DOUBTFUL_DEBT')
+      .filter(t => {
+        if (!searchTerm) return true;
+        const s = searchTerm.toLowerCase();
+        return (
+          (t?.description || '').toLowerCase().includes(s) ||
+          (t?.refNo || '').toLowerCase().includes(s) ||
+          (t?.expenseCategory || '').toLowerCase().includes(s)
+        );
+      })
+      .sort((a, b) => {
+        const dateA = a.date ? new Date(a.date).getTime() : 0;
+        const dateB = b.date ? new Date(b.date).getTime() : 0;
+        return dateB - dateA; // Sort by date descending
+      });
+  }, [transactions, searchTerm]);
 
   useEffect(() => {
     if (initialEditingId) {
