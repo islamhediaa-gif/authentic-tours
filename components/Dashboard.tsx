@@ -7,7 +7,6 @@ import { TrendingUp, TrendingDown, Wallet, Users, Target, Activity, CreditCard, 
 import { Transaction, Customer, Supplier, Treasury, User, JournalEntry, Partner, Employee, CostCenter, Currency } from '../types';
 import { useIncomeStatement, useTrialBalance, useBalanceSheet } from '../hooks/useReportData';
 import { normalizeArabic } from '../utils/arabicUtils';
-import { SupabaseService } from '../SupabaseService';
 import { DataService } from '../DataService';
 
 interface DashboardProps {
@@ -151,9 +150,9 @@ const Dashboard: React.FC<DashboardProps> = ({
   const activeTx = useMemo(() => filteredTransactions.filter(t => t && !t.isVoided), [filteredTransactions]);
   const activeJE = useMemo(() => filteredJournalEntries, [filteredJournalEntries]);
   
-  // تعديل التاريخ الافتراضي ليشمل السنة السابقة والحالية لرؤية الأرباح المنطقية
-  const currentYearStart = new Date(new Date().getFullYear() - 1, 0, 1).toISOString().split('T')[0];
-  const currentYearEnd = new Date(new Date().getFullYear(), 11, 31).toISOString().split('T')[0];
+  // تعديل التاريخ الافتراضي ليشمل كافة البيانات التاريخية لضمان ظهور الرصيد التراكمي
+  const currentYearStart = '2020-01-01'; 
+  const currentYearEnd = new Date(new Date().getFullYear() + 1, 11, 31).toISOString().split('T')[0];
   
   const trialBalance = useTrialBalance(activeJE, customers, suppliers, partners, employees, treasuries, currencies, currentYearStart, currentYearEnd, transactions);
   const incomeStats = useIncomeStatement(trialBalance, activeJE);
@@ -173,11 +172,11 @@ const Dashboard: React.FC<DashboardProps> = ({
     // الأصول والحسابات المدينة (Debit - Credit)
     const totalReceivables = balanceSheet.assets - (
       (treasuries || []).reduce((s, t) => {
-        const b = trialBalance.find(x => x.id === t.id && x.type === 'TREASURY');
+        const b = trialBalance.find(x => String(x.id) === String(t.id) && x.type === 'TREASURY');
         return s + ((b?.debit || 0) - (b?.credit || 0));
       }, 0) +
       (employees || []).reduce((s, e) => {
-        const b = trialBalance.find(x => x.id === e.id && x.type === 'EMPLOYEE_ADVANCE');
+        const b = trialBalance.find(x => String(x.id) === String(e.id) && x.type === 'EMPLOYEE_ADVANCE');
         return s + ((b?.debit || 0) - (b?.credit || 0));
       }, 0)
     );
@@ -197,27 +196,27 @@ const Dashboard: React.FC<DashboardProps> = ({
     const totalSales = incomeStats.totalRevenues;
 
     const cashOnHand = (treasuries || []).reduce((s, t) => {
-      const b = trialBalance.find(x => x.id === t.id && x.type === 'TREASURY');
+      const b = trialBalance.find(x => String(x.id) === String(t.id) && x.type === 'TREASURY');
       return s + (b ? (b.debit - b.credit) : 0);
     }, 0);
 
     const totalAdvances = (employees || []).reduce((s, e) => {
-      const b = trialBalance.find(x => x.id === e.id && x.type === 'EMPLOYEE_ADVANCE');
+      const b = trialBalance.find(x => String(x.id) === String(e.id) && x.type === 'EMPLOYEE_ADVANCE');
       return s + (b ? (b.debit - b.credit) : 0);
     }, 0);
 
     const totalReceivablesFromTB = (customers || []).reduce((s, c) => {
-      const b = trialBalance.find(x => x.id === c.id && x.type === 'CUSTOMER');
+      const b = trialBalance.find(x => String(x.id) === String(c.id) && x.type === 'CUSTOMER');
       return s + (b ? (b.debit - b.credit) : 0);
     }, 0);
 
     const totalSupplierDebts = (suppliers || []).reduce((s, su) => {
-      const b = trialBalance.find(x => x.id === su.id && x.type === 'SUPPLIER');
+      const b = trialBalance.find(x => String(x.id) === String(su.id) && x.type === 'SUPPLIER');
       return s + (b ? (b.credit - b.debit) : 0);
     }, 0);
 
     const totalEmployeePayables = (employees || []).reduce((s, e) => {
-      const b = trialBalance.find(x => x.id === e.id && x.type === 'LIABILITY');
+      const b = trialBalance.find(x => String(x.id) === String(e.id) && x.type === 'LIABILITY');
       return s + (b ? (b.credit - b.debit) : 0);
     }, 0);
     

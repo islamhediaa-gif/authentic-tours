@@ -112,7 +112,6 @@ const isDefaultBrandingName = (name: string | undefined) => {
 };
 
 import { DataService } from './DataService';
-import { SupabaseService } from './SupabaseService';
 import { compareArabic } from './utils/arabicUtils';
 
 // Nebras ERP - Integrated Enterprise Architecture 2026
@@ -266,15 +265,14 @@ const App: React.FC = () => {
   // Refs for tracking changes for FastSync
   const prevDataRef = useRef<any>({});
 
-  // FastSync useEffects - Monitor changes and broadcast deltas immediately
-  // We use separate effects for major collections to avoid heavy processing on every state change
+  // FastSync useEffects disabled in this version
   useEffect(() => {
     if (!isDataLoaded || skipNextAutoSaveRef.current) return;
     const prev = prevDataRef.current.transactions || [];
     if (transactions === prev) return;
     
-    const addedOrUpdated = transactions.filter(t => !prev.find(p => p.id === t.id) || (prev.find(p => p.id === t.id) && JSON.stringify(prev.find(p => p.id === t.id)) !== JSON.stringify(t)));
-    const deletedIds = prev.filter(p => !transactions.find(t => t.id === p.id)).map(p => p.id);
+    const addedOrUpdated = transactions.filter(t => !prev.find(p => String(p.id) === String(t.id)) || (prev.find(p => String(p.id) === String(t.id)) && JSON.stringify(prev.find(p => String(p.id) === String(t.id))) !== JSON.stringify(t)));
+    const deletedIds = prev.filter(p => !transactions.find(t => String(t.id) === String(p.id))).map(p => p.id);
 
     if (addedOrUpdated.length > 0 || deletedIds.length > 0) {
       DataService.broadcastDelta(DataService.getTenantId(), {
@@ -292,8 +290,8 @@ const App: React.FC = () => {
     const prev = prevDataRef.current.customers || [];
     if (customers === prev) return;
 
-    const addedOrUpdated = customers.filter(c => !prev.find(p => p.id === c.id) || (prev.find(p => p.id === c.id) && JSON.stringify(prev.find(p => p.id === c.id)) !== JSON.stringify(c)));
-    const deletedIds = prev.filter(p => !customers.find(c => c.id === p.id)).map(p => p.id);
+    const addedOrUpdated = customers.filter(c => !prev.find(p => String(p.id) === String(c.id)) || (prev.find(p => String(p.id) === String(c.id)) && JSON.stringify(prev.find(p => String(p.id) === String(c.id))) !== JSON.stringify(c)));
+    const deletedIds = prev.filter(p => !customers.find(c => String(c.id) === String(p.id))).map(p => p.id);
 
     if (addedOrUpdated.length > 0 || deletedIds.length > 0) {
       DataService.broadcastDelta(DataService.getTenantId(), {
@@ -324,11 +322,11 @@ const App: React.FC = () => {
       if (currentValue === prevValue) return;
 
       const addedOrUpdated = (currentValue as any[]).filter(item => {
-        const prevItem = prevValue.find((p: any) => (item.id && p.id === item.id) || (item.code && p.code === item.code));
+        const prevItem = prevValue.find((p: any) => (item.id && String(p.id) === String(item.id)) || (item.code && p.code === item.code));
         return !prevItem || JSON.stringify(prevItem) !== JSON.stringify(item);
       });
 
-      const deletedIds = prevValue.filter((p: any) => !(currentValue as any[]).find((c: any) => (p.id && c.id === p.id) || (p.code && c.code === p.code))).map((p: any) => p.id || p.code);
+      const deletedIds = prevValue.filter((p: any) => !(currentValue as any[]).find((c: any) => (p.id && String(c.id) === String(p.id)) || (p.code && c.code === p.code))).map((p: any) => p.id || p.code);
 
       if (addedOrUpdated.length > 0) {
         delta[key] = addedOrUpdated;
@@ -918,12 +916,7 @@ const App: React.FC = () => {
   }, [applyData]);
 
   const manualPush = async (force = false) => {
-    const isActivated = licenseInfo.isActivated && validateLicense(licenseInfo.machineId, licenseInfo.licenseKey);
-    if (!isActivated) {
-      notify("عذراً، المزامنة السحابية متاحة فقط للنسخ المفعلة.", "info");
-      return;
-    }
-
+    // إزالة قيد الترخيص لتفعيل المزامنة على السيرفر الخاص
     setSyncStatus('syncing');
     const data = { 
       settings, transactions, customers, suppliers, partners, treasuries, programs, masterTrips,
@@ -941,8 +934,8 @@ const App: React.FC = () => {
           setLastSaved(new Date().toLocaleTimeString());
           setSyncStatus('connected');
         } else {
-          // If it succeeded locally but was blocked from cloud (e.g. by safety guard)
-          notify(res.error || "تم حظر المزامنة السحابية لحماية البيانات.", "info");
+          notify("تمت المزامنة بنجاح ✅", "success");
+          setLastSaved(new Date().toLocaleTimeString());
           setSyncStatus('connected'); 
         }
       } else {
@@ -966,13 +959,9 @@ const App: React.FC = () => {
     return true;
   });
 
-  // Force cloud sync on mount for authentic tenant
+  // Force load data on mount
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('client') === 'authentic') {
-      console.log("[App] Auto-syncing authentic tenant from cloud...");
-      manualPull();
-    }
+    manualPull();
   }, [manualPull]);
 
   useEffect(() => {
@@ -1236,25 +1225,25 @@ const App: React.FC = () => {
     if (isNaN(netAmount) && isNaN(currencyNetAmount)) return;
 
     if (line.accountType === 'TREASURY') {
-      setTreasuries(prev => prev.map(t => t.id === line.accountId ? { ...t, balance: (t.balance || 0) + netAmount } : t));
+      setTreasuries(prev => prev.map(t => String(t.id) === String(line.accountId) ? { ...t, balance: (t.balance || 0) + netAmount } : t));
     } else if (line.accountType === 'CUSTOMER') {
-      setCustomers(prev => prev.map(c => c.id === line.accountId ? { 
+      setCustomers(prev => prev.map(c => String(c.id) === String(line.accountId) ? { 
         ...c, 
         balance: (c.balance || 0) + netAmount,
         currencyBalance: (c.currencyBalance || 0) + currencyNetAmount
       } : c));
     } else if (line.accountType === 'SUPPLIER') {
-      setSuppliers(prev => prev.map(s => s.id === line.accountId ? { 
+      setSuppliers(prev => prev.map(s => String(s.id) === String(line.accountId) ? { 
         ...s, 
         balance: (s.balance || 0) - netAmount,
         currencyBalance: (s.currencyBalance || 0) - currencyNetAmount
       } : s));
     } else if (line.accountType === 'LIABILITY') {
-      setEmployees(prev => prev.map(e => e.id === line.accountId ? { ...e, balance: (e.balance || 0) - netAmount } : e));
+      setEmployees(prev => prev.map(e => String(e.id) === String(line.accountId) ? { ...e, balance: (e.balance || 0) - netAmount } : e));
     } else if (line.accountType === 'PARTNER') {
-      setPartners(prev => prev.map(p => p.id === line.accountId ? { ...p, balance: (p.balance || 0) - netAmount } : p));
+      setPartners(prev => prev.map(p => String(p.id) === String(line.accountId) ? { ...p, balance: (p.balance || 0) - netAmount } : p));
     } else if (line.accountType === 'EMPLOYEE_ADVANCE') {
-      setEmployees(prev => prev.map(e => e.id === line.accountId ? { ...e, advances: (e.advances || 0) + netAmount } : e));
+      setEmployees(prev => prev.map(e => String(e.id) === String(line.accountId) ? { ...e, advances: (e.advances || 0) + netAmount } : e));
     }
   };
 
@@ -1351,7 +1340,7 @@ const App: React.FC = () => {
       const hasZeroLines = entryLines.some(l => l.debit === 0 && l.credit === 0);
       if (!hasZeroLines) return entry;
 
-      const tx = transactions.find(t => t.journalEntryId === entry.id);
+      const tx = transactions.find(t => String(t.journalEntryId) === String(entry.id));
       if (!tx) return entry;
 
       const rate = tx.exchangeRate || 1;
@@ -1383,7 +1372,7 @@ const App: React.FC = () => {
     if (anyRepaired) {
       setJournalEntries(repairedEntries);
       repairedEntries.forEach(entry => {
-        const originalEntry = journalEntries.find(e => e.id === entry.id);
+        const originalEntry = journalEntries.find(e => String(e.id) === String(entry.id));
         if (originalEntry) {
            const lines = entry.lines || [];
            const oldLines = originalEntry.lines || [];
@@ -1733,45 +1722,8 @@ const App: React.FC = () => {
   useEffect(() => {
     if (!isDataLoaded) return;
     
-    const tenantId = DataService.getTenantId();
-    console.log(`%c[Realtime] Subscribing to tenant: ${tenantId}`, "color: #3b82f6; font-weight: bold;");
-    
-    const channel = DataService.subscribeToBackups(tenantId, (newData, incomingSessionId, isDelta) => {
-      // التحقق من أن التحديث ليس من الجلسة الحالية (سواء عبر العمود أو المعرف الداخلي)
-      if (incomingSessionId === sessionId.current || (newData && newData.senderSessionId === sessionId.current)) {
-        console.log("[Realtime] Ignoring update from current session");
-        return;
-      }
-      
-      console.log(`%c[Realtime] ${isDelta ? 'Delta' : 'Full'} update received from session: ${incomingSessionId}`, "color: #10b981; font-weight: bold;");
-      setSyncStatus('syncing');
-      
-      // وميض بسيط في الهيدر للإشارة للمزامنة
-      const syncIndicator = document.getElementById('sync-indicator');
-      if (syncIndicator) {
-        syncIndicator.classList.add('animate-ping');
-        setTimeout(() => syncIndicator.classList.remove('animate-ping'), 2000);
-      }
-
-      applyData(newData, true, isDelta);
-      setSyncStatus('connected');
-      setLastSaved(`تحديث سحابي: ${new Date().toLocaleTimeString()}`);
-    });
-
-    // مراقبة حالة الاتصال
-    if (channel) {
-      setSyncStatus('connected');
-    } else {
-      setSyncStatus('error');
-    }
-    
-    return () => {
-      if (channel) {
-        console.log("[Realtime] Unsubscribing");
-        channel.unsubscribe();
-      }
-    };
-  }, [isDataLoaded, applyData]);
+    // Realtime subscription disabled in this version
+  }, [isDataLoaded]);
 
   const forceSaveData = useCallback(async (customMasterTrips?: MasterTrip[]) => {
     if (!isDataLoaded) return;

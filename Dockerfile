@@ -1,20 +1,20 @@
-# Use Node.js LTS
-FROM node:18-slim
+# Dockerfile for Authentic ERP Backend
+FROM node:20-slim
 
-# Create app directory
 WORKDIR /app
 
-# Copy package files
+# Copy package files first for better caching
 COPY package*.json ./
 
-# Install dependencies (production only)
+# Install production dependencies
 RUN npm install --production
 
-# Copy the rest of the application code
-COPY server.js ./
+# Copy server code
+COPY server.js .
+COPY .env .
 
-# Expose the port
-EXPOSE 3001
+# Expose port 3000
+EXPOSE 3000
 
 # Start the server
 CMD ["node", "server.js"]

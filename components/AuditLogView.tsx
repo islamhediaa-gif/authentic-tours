@@ -1,7 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
 import { History, Search, User, Calendar, Database, Eye, ArrowLeft, Filter, AlertTriangle } from 'lucide-react';
-import { SupabaseService } from '../SupabaseService';
 import { DataService } from '../DataService';
 
 const AuditLogView: React.FC = () => {

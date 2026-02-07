@@ -20,34 +20,34 @@ if (fs.existsSync(path.join(__dirname, '.env.local'))) {
 const app = express();
 app.use(cors({
   origin: function (origin, callback) {
-    const allowedOrigins = [
-      'https://www.nebras-erp.com',
-      'https://authentic-tours.vercel.app',
-      'https://authentic-two-kappa.vercel.app',
-      'http://localhost:5173'
-    ];
-    
-    // السماح بالطلبات التي ليس لها origin (مثل تطبيقات الموبايل أو curl) 
-    // أو الطلبات التي تأتي من الروابط المسموحة أو أي رابط vercel فرعي
-    if (!origin || allowedOrigins.includes(origin) || origin.endsWith('.vercel.app')) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
+    // السماح بكل الروابط مؤقتاً أثناء التجهيز أو وضع روابط محددة
+    // في الـ VPS يفضل وضع الدومين الخاص بك هنا
+    callback(null, true);
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key']
 }));
+
+// Health Check
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', time: new Date().toISOString() });
+});
 app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ limit: '100mb', extended: true }));
 
+// Global Logger to see every request
+app.use((req, res, next) => {
+  console.log(`[${new Date().toLocaleTimeString()}] 📥 ${req.method} ${req.url}`);
+  next();
+});
+
 // Database connection pool configuration
 const dbConfig = process.env.MYSQL_URL || process.env.MYSQL_PUBLIC_URL || {
-  host: process.env.MYSQLHOST || 'interchange.proxy.rlwy.net',
+  host: process.env.MYSQLHOST || 'localhost',
   user: process.env.MYSQLUSER || 'root',
-  password: process.env.MYSQLPASSWORD || process.env.MYSQL_ROOT_PASSWORD || 'OHkOpzVMmgrPdqejmRMdyymxjFLvbYoK',
-  database: process.env.MYSQLDATABASE || process.env.MYSQL_DATABASE || 'railway',
-  port: process.env.MYSQLPORT || 36607,
+  password: process.env.MYSQLPASSWORD || '',
+  database: process.env.MYSQLDATABASE || 'nebras_db',
+  port: process.env.MYSQLPORT || 3306,
 };
 
 const pool = (typeof dbConfig === 'string') 
@@ -60,10 +60,10 @@ const pool = (typeof dbConfig === 'string')
       connectTimeout: 30000
     });
 
-// --- GLOBAL HELPERS (Available early) ---
+// --- GLOBAL HELPERS (Defined before use) ---
 const tableColumnsCache = {};
 
-async function getTableColumns(table) {
+const getTableColumns = async (table) => {
   if (tableColumnsCache[table]) return tableColumnsCache[table];
   try {
     const [cols] = await pool.query(mysqlLib.format("SHOW COLUMNS FROM ??", [table]));
@@ -74,7 +74,7 @@ async function getTableColumns(table) {
     console.error(`Failed to get columns for ${table}:`, e.message);
     return null;
   }
-}
+};
 
 const toSnake = (obj) => {
   if (obj === null || typeof obj !== 'object') return obj;
@@ -100,7 +100,7 @@ const toSnake = (obj) => {
   return snake;
 };
 
-async function bulkUpsert(table, records, tenant_id) {
+const bulkUpsert = async (table, records, tenant_id) => {
     if (records.length === 0) return;
     const validColumns = await getTableColumns(table);
     const sanitized = records.map(r => {
@@ -135,7 +135,7 @@ async function bulkUpsert(table, records, tenant_id) {
         } catch (e) { console.error(`❌ Bulk upsert failed for ${table}:`, e.message); }
     }
     return { affectedRows: totalAffected };
-}
+};
 
 // Single Big Fetch Endpoint for high reliability
 app.get('/api/data-all', async (req, res) => {
@@ -170,61 +170,220 @@ app.get('/api/data-all', async (req, res) => {
 // إنشاء الجداول وتحديث الهيكل إذا لم تكن موجودة
 const initDB = async () => {
   try {
-    await pool.execute(`
-      CREATE TABLE IF NOT EXISTS user_backups (
-        user_id VARCHAR(255) PRIMARY KEY,
-        data LONGTEXT,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-      )
-    `);
+    // 1. إنشاء قاعدة البيانات إذا لم تكن موجودة باستخدام اتصال مؤقت
+    const tempConn = await mysql.createConnection({
+      host: process.env.MYSQLHOST || 'localhost',
+      user: process.env.MYSQLUSER || 'root',
+      password: process.env.MYSQLPASSWORD || '',
+    });
+    await tempConn.query(`CREATE DATABASE IF NOT EXISTS \`${process.env.MYSQLDATABASE || 'nebras_db'}\``);
     
-    // تأمين وجود الأعمدة الجديدة في الجداول الرئيسية
+    // رفع حد البيانات المسموح بنقلها لـ 100 ميجا لحل مشكلة اللوجو الكبير
     try {
-      const [mtCols] = await pool.query("SHOW COLUMNS FROM master_trips");
-      const mtColNames = mtCols.map(c => c.Field);
-      if (!mtColNames.includes('components')) {
-        await pool.query("ALTER TABLE master_trips ADD COLUMN components LONGTEXT");
-        console.log("Added 'components' column to master_trips");
-      }
-      if (!mtColNames.includes('accommodation')) {
-        await pool.query("ALTER TABLE master_trips ADD COLUMN accommodation LONGTEXT");
-        console.log("Added 'accommodation' column to master_trips");
-      }
-    } catch (e) { console.warn("Master trips table might not exist yet during init"); }
+        await tempConn.query("SET GLOBAL max_allowed_packet = 104857600");
+        console.log("✅ MySQL max_allowed_packet increased to 100MB");
+    } catch (e) {
+        console.warn("⚠️ Could not set GLOBAL max_allowed_packet, trying session level...");
+        await tempConn.query("SET SESSION max_allowed_packet = 104857600");
+    }
+    
+    await tempConn.end();
 
-    try {
-      const [pCols] = await pool.query("SHOW COLUMNS FROM programs");
-      const pColNames = pCols.map(c => c.Field);
-      if (!pColNames.includes('components')) {
-        await pool.query("ALTER TABLE programs ADD COLUMN components LONGTEXT");
-        console.log("Added 'components' column to programs");
-      }
-    } catch (e) { console.warn("Programs table might not exist yet during init"); }
+    console.log(`✅ Database "${process.env.MYSQLDATABASE || 'nebras_db'}" ensured.`);
 
-    try {
-      const [jlCols] = await pool.query("SHOW COLUMNS FROM journal_lines");
-      const jlColNames = jlCols.map(c => c.Field);
-      
-      // Force ID to be VARCHAR(255) to support our generated unique IDs
-      const idCol = jlCols.find(c => c.Field === 'id');
-      if (idCol && idCol.Type.toLowerCase().includes('int')) {
-          console.log("SuperRestore: Changing journal_lines.id from INT to VARCHAR(255)");
-          await pool.query("ALTER TABLE journal_lines MODIFY COLUMN id VARCHAR(255)");
-      }
+    // 2. قائمة الجداول الأساسية المطلوب إنشاؤها
+    const tableQueries = [
+      `CREATE TABLE IF NOT EXISTS tenant_settings (
+        id VARCHAR(255) PRIMARY KEY,
+        tenant_id VARCHAR(255),
+        company_name VARCHAR(255),
+        logo_url TEXT,
+        settings_json LONGTEXT,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      )`,
+      `CREATE TABLE IF NOT EXISTS users (
+        id VARCHAR(255) PRIMARY KEY,
+        tenant_id VARCHAR(255),
+        name VARCHAR(255),
+        email VARCHAR(255),
+        role VARCHAR(50),
+        status VARCHAR(50),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )`,
+      `CREATE TABLE IF NOT EXISTS currencies (
+        id VARCHAR(255) PRIMARY KEY,
+        tenant_id VARCHAR(255),
+        name VARCHAR(100),
+        code VARCHAR(10),
+        symbol VARCHAR(10),
+        exchange_rate DECIMAL(18, 4)
+      )`,
+      `CREATE TABLE IF NOT EXISTS treasuries (
+        id VARCHAR(255) PRIMARY KEY,
+        tenant_id VARCHAR(255),
+        name VARCHAR(255),
+        currency_id VARCHAR(255),
+        balance DECIMAL(18, 4) DEFAULT 0
+      )`,
+      `CREATE TABLE IF NOT EXISTS customers (
+        id VARCHAR(255) PRIMARY KEY,
+        tenant_id VARCHAR(255),
+        name VARCHAR(255),
+        phone VARCHAR(50),
+        email VARCHAR(255),
+        address TEXT,
+        balance DECIMAL(18, 4) DEFAULT 0
+      )`,
+      `CREATE TABLE IF NOT EXISTS suppliers (
+        id VARCHAR(255) PRIMARY KEY,
+        tenant_id VARCHAR(255),
+        name VARCHAR(255),
+        phone VARCHAR(50),
+        email VARCHAR(255),
+        address TEXT,
+        balance DECIMAL(18, 4) DEFAULT 0
+      )`,
+      `CREATE TABLE IF NOT EXISTS partners (
+        id VARCHAR(255) PRIMARY KEY,
+        tenant_id VARCHAR(255),
+        name VARCHAR(255),
+        phone VARCHAR(50),
+        email VARCHAR(255),
+        address TEXT,
+        balance DECIMAL(18, 4) DEFAULT 0
+      )`,
+      `CREATE TABLE IF NOT EXISTS transactions (
+        id VARCHAR(255) PRIMARY KEY,
+        tenant_id VARCHAR(255),
+        date DATETIME,
+        type VARCHAR(50),
+        amount DECIMAL(18, 4),
+        currency_id VARCHAR(255),
+        description TEXT,
+        reference_id VARCHAR(255),
+        status VARCHAR(50),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )`,
+      `CREATE TABLE IF NOT EXISTS journal_entries (
+        id VARCHAR(255) PRIMARY KEY,
+        tenant_id VARCHAR(255),
+        date DATETIME,
+        description TEXT,
+        reference VARCHAR(255),
+        status VARCHAR(50),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )`,
+      `CREATE TABLE IF NOT EXISTS journal_lines (
+        id VARCHAR(255) PRIMARY KEY,
+        tenant_id VARCHAR(255),
+        journal_entry_id VARCHAR(255),
+        transaction_id VARCHAR(255),
+        trip_id VARCHAR(255),
+        program_id VARCHAR(255),
+        account_id VARCHAR(255),
+        debit DECIMAL(18, 4) DEFAULT 0,
+        credit DECIMAL(18, 4) DEFAULT 0,
+        description TEXT
+      )`,
+      `CREATE TABLE IF NOT EXISTS audit_logs (
+        id VARCHAR(255) PRIMARY KEY,
+        tenant_id VARCHAR(255),
+        user_id VARCHAR(255),
+        action VARCHAR(255),
+        table_name VARCHAR(100),
+        record_id VARCHAR(255),
+        old_data LONGTEXT,
+        new_data LONGTEXT,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )`,
+      `CREATE TABLE IF NOT EXISTS master_trips (
+        id VARCHAR(255) PRIMARY KEY,
+        tenant_id VARCHAR(255),
+        name VARCHAR(255),
+        start_date DATETIME,
+        end_date DATETIME,
+        status VARCHAR(50),
+        components LONGTEXT,
+        accommodation LONGTEXT
+      )`,
+      `CREATE TABLE IF NOT EXISTS programs (
+        id VARCHAR(255) PRIMARY KEY,
+        tenant_id VARCHAR(255),
+        name VARCHAR(255),
+        description TEXT,
+        components LONGTEXT
+      )`,
+      `CREATE TABLE IF NOT EXISTS cost_centers (
+        id VARCHAR(255) PRIMARY KEY,
+        tenant_id VARCHAR(255),
+        name VARCHAR(255),
+        code VARCHAR(50)
+      )`,
+      `CREATE TABLE IF NOT EXISTS departments (
+        id VARCHAR(255) PRIMARY KEY,
+        tenant_id VARCHAR(255),
+        name VARCHAR(255)
+      )`,
+      `CREATE TABLE IF NOT EXISTS designations (
+        id VARCHAR(255) PRIMARY KEY,
+        tenant_id VARCHAR(255),
+        name VARCHAR(255)
+      )`,
+      `CREATE TABLE IF NOT EXISTS attendance_logs (
+        id VARCHAR(255) PRIMARY KEY,
+        tenant_id VARCHAR(255),
+        employee_id VARCHAR(255),
+        date DATE,
+        check_in TIME,
+        check_out TIME,
+        status VARCHAR(50)
+      )`,
+      `CREATE TABLE IF NOT EXISTS shifts (
+        id VARCHAR(255) PRIMARY KEY,
+        tenant_id VARCHAR(255),
+        name VARCHAR(255),
+        start_time TIME,
+        end_time TIME
+      )`,
+      `CREATE TABLE IF NOT EXISTS employee_leaves (
+        id VARCHAR(255) PRIMARY KEY,
+        tenant_id VARCHAR(255),
+        employee_id VARCHAR(255),
+        type VARCHAR(50),
+        start_date DATE,
+        end_date DATE,
+        status VARCHAR(50)
+      )`,
+      `CREATE TABLE IF NOT EXISTS employee_allowances (
+        id VARCHAR(255) PRIMARY KEY,
+        tenant_id VARCHAR(255),
+        employee_id VARCHAR(255),
+        type VARCHAR(50),
+        amount DECIMAL(18, 4)
+      )`,
+      `CREATE TABLE IF NOT EXISTS employee_documents (
+        id VARCHAR(255) PRIMARY KEY,
+        tenant_id VARCHAR(255),
+        employee_id VARCHAR(255),
+        type VARCHAR(50),
+        expiry_date DATE,
+        file_url TEXT
+      )`
+    ];
 
-      if (!jlColNames.includes('transaction_id')) {
-        await pool.query("ALTER TABLE journal_lines ADD COLUMN transaction_id VARCHAR(255)");
-        console.log("Added 'transaction_id' column to journal_lines");
-      }
-      if (!jlColNames.includes('trip_id')) {
-        await pool.query("ALTER TABLE journal_lines ADD COLUMN trip_id VARCHAR(255)");
-        console.log("Added 'trip_id' column to journal_lines");
-      }
-    } catch (e) { console.warn("Journal lines table might not exist yet during init"); }
+    for (const query of tableQueries) {
+      await pool.query(query);
+    }
 
-    console.log("Database initialized and schema verified");
+    console.log("🚀 All ERP tables verified/created successfully.");
   } catch (err) {
-    console.error("Database initialization failed:", err.message);
+    console.error("❌ Database initialization failed!");
+    console.error("Reason:", err.message);
+    if (err.code === 'ECONNREFUSED') {
+      console.error("💡 TIP: Is MySQL running? Check XAMPP/WAMP control panel.");
+    } else if (err.code === 'ER_ACCESS_DENIED_ERROR') {
+      console.error("💡 TIP: Wrong username or password in .env file.");
+    }
   }
 };
 initDB();
@@ -646,5 +805,10 @@ app.get('/api/dashboard/summary', async (req, res) => {
   }
 });
 
-const PORT = process.env.PORT || 8080;
-app.listen(PORT, "0.0.0.0", () => console.log(`Railway Backend running on port ${PORT}`));
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`-----------------------------------------`);
+  console.log(`🚀 Authentic ERP Server is running!`);
+  console.log(`📡 URL: http://localhost:${PORT}`);
+  console.log(`-----------------------------------------`);
+});

@@ -100,6 +100,7 @@ export const useHajjUmrahProgramStats = (
           }
           programData[t.programId].bookings += Number(t.adultCount || 0) + Number(t.childCount || 0) + Number(t.infantCount || 0) + Number(t.supervisorCount || 0) || 1;
         } else if (t.type === 'EXPENSE' || t.type === 'PURCHASE_ONLY') {
+          // التكاليف المباشرة المسجلة كـ Expense أو Purchase
           programData[t.programId].cost += amount;
           
           if (t.category === 'EXPENSE_GEN' || t.category === 'DOUBTFUL_DEBT') {
@@ -251,23 +252,21 @@ export const useTrialBalance = (
     });
 
     (filteredJournalEntries || []).forEach(entry => {
-      if (entry.date <= toDate) {
-        const types = jeToTxTypes.get(entry.id) || new Set(['NORMAL']);
-        const isPurchaseOnly = types.has('PURCHASE_ONLY');
-        const isRevenueOnly = types.has('REVENUE_ONLY');
-        
+      // التحقق من التاريخ بشكل مرن للتعامل مع تنسيق PostgreSQL
+      const entryDateStr = entry.date ? new Date(entry.date).toISOString().split('T')[0] : '';
+      if (entryDateStr && entryDateStr <= toDate) {
         (entry.lines || []).forEach(line => {
-          processLine(line, entry.date);
+          processLine(line, entryDateStr);
         });
       }
     });
 
     // Also process lines from transactions that are NOT linked to a journal entry
-    // (to avoid double counting, though usually they are exclusive in the DB structure)
     (transactions || []).forEach(tx => {
-      if (tx.date <= toDate && !tx.isVoided) {
+      const txDateStr = tx.date ? new Date(tx.date).toISOString().split('T')[0] : '';
+      if (txDateStr && txDateStr <= toDate && !tx.isVoided) {
         (tx.lines || []).forEach(line => {
-          processLine(line, tx.date);
+          processLine(line, txDateStr);
         });
       }
     });
@@ -290,11 +289,11 @@ export const useTrialBalance = (
       balances[key].debit += Number(line.debit || 0);
       balances[key].credit += Number(line.credit || 0);
 
-      const entity = line.accountType === 'CUSTOMER' ? customers.find(c => c.id === line.accountId) :
-                     line.accountType === 'SUPPLIER' ? suppliers.find(s => s.id === line.accountId) :
-                     line.accountType === 'PARTNER' ? partners.find(p => p.id === line.accountId) :
-                     (line.accountType === 'LIABILITY' || line.accountType === 'EMPLOYEE_ADVANCE') ? employees.find(e => e.id === line.accountId) :
-                     line.accountType === 'TREASURY' ? treasuries.find(t => t.id === line.accountId) : null;
+      const entity = line.accountType === 'CUSTOMER' ? customers.find(c => String(c.id) === String(line.accountId)) :
+                     line.accountType === 'SUPPLIER' ? suppliers.find(s => String(s.id) === String(line.accountId)) :
+                     line.accountType === 'PARTNER' ? partners.find(p => String(p.id) === String(line.accountId)) :
+                     (line.accountType === 'LIABILITY' || line.accountType === 'EMPLOYEE_ADVANCE') ? employees.find(e => String(e.id) === String(line.accountId)) :
+                     line.accountType === 'TREASURY' ? treasuries.find(t => String(t.id) === String(line.accountId)) : null;
       
       if (entity) {
          const accountCurrency = (entity as any).openingBalanceCurrency || 'EGP';
@@ -371,11 +370,6 @@ export const useIncomeStatement = (trialBalance: any[], filteredJournalEntries: 
           if (isAdmin) {
             adminExpenses += costBalance;
           } else {
-            // استبعاد التكلفة الوهمية (Mirror) الناتجة عن خطأ Engine
-            // إذا كانت التكلفة تطابق تماماً قيمة أي بند إيراد في نفس القيد، فهي غالباً وهمية
-            const isMirrorLine = revAmounts.some(ra => Math.abs(ra - costBalance) < 0.1);
-            if (isMirrorLine) return;
-
             if (sid.includes('FLIGHT') || sname.includes('طيران')) flightCost += costBalance;
             else if (sid.includes('HAJJ') || sid.includes('UMRAH') || sname.includes('حج') || sname.includes('عمرة')) hajjUmrahCost += costBalance;
             else serviceCost += costBalance;
@@ -462,15 +456,10 @@ export const useMasterTripStats = (
     (filteredJournalEntries || []).forEach(je => {
       const tripId = jeToTripId.get(je.id);
       if (tripId && tripData[tripId]) {
-        const revLine = je.lines.find(l => l.accountId === 'HAJJ_UMRAH_REVENUE');
-        const costLine = je.lines.find(l => l.accountId === 'HAJJ_UMRAH_COST');
-        const isMirror = revLine && costLine && Math.abs(Number(revLine.credit || 0) - Number(costLine.debit || 0)) < 0.1;
-
         je.lines.forEach(l => {
           if (l.accountType === 'REVENUE') {
             tripData[tripId].revenue += (Number(l.credit || 0) - Number(l.debit || 0));
           } else if (l.accountType === 'EXPENSE' && !['SALARY', 'RENT', 'OFFICE'].includes(l.accountId)) {
-            if (l.accountId === 'HAJJ_UMRAH_COST' && isMirror) return;
             tripData[tripId].cost += (Number(l.debit || 0) - Number(l.credit || 0));
           } else if (l.accountType === 'ASSET' && l.accountId === 'ASSET_GUARANTEES') {
             tripData[tripId].cost += (Number(l.debit || 0) - Number(l.credit || 0));

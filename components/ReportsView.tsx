@@ -202,8 +202,8 @@ const ReportsView: React.FC<ReportsViewProps> = ({
       let balance = 0;
       const currencyBalance = b.balanceInAccountCurrency || 0;
       const isForeignAccount = (b.type === 'CUSTOMER' || b.type === 'SUPPLIER') && 
-                               ((customers || []).find(c => c.id === b.id)?.openingBalanceCurrency !== (settings.baseCurrency || 'EGP') || 
-                                (suppliers || []).find(s => s.id === b.id)?.openingBalanceCurrency !== (settings.baseCurrency || 'EGP'));
+                               ((customers || []).find(c => String(c.id) === String(b.id))?.openingBalanceCurrency !== (settings.baseCurrency || 'EGP') || 
+                                (suppliers || []).find(s => String(s.id) === String(b.id))?.openingBalanceCurrency !== (settings.baseCurrency || 'EGP'));
 
       if (b.type === 'CUSTOMER' || b.type === 'TREASURY' || b.type === 'ASSET' || b.type === 'EMPLOYEE_ADVANCE') {
         balance = (b.debit || 0) - (b.credit || 0);
