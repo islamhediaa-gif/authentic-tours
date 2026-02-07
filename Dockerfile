@@ -11,7 +11,6 @@ RUN npm install --production
 
 # Copy server code
 COPY server.js .
-COPY .env .
 
 # Expose port 3000
 EXPOSE 3000
