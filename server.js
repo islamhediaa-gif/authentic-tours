@@ -29,10 +29,6 @@ app.use(cors({
 }));
 
 // Health Check
-app.get('/', (req, res) => {
-  res.send('<h1>Authentic ERP Server is running!</h1><p>The backend is ready to receive sync requests.</p>');
-});
-
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });
 });
@@ -41,11 +37,20 @@ app.get('/api/health', (req, res) => {
 const distPath = path.join(__dirname, 'dist');
 if (fs.existsSync(distPath)) {
   app.use(express.static(distPath));
+  // Redirect root to frontend
+  app.get('/', (req, res) => {
+    res.sendFile(path.join(distPath, 'index.html'));
+  });
   app.get('*', (req, res) => {
     if (!req.url.startsWith('/api')) {
       res.sendFile(path.join(distPath, 'index.html'));
     }
   });
+} else {
+    // If no frontend built yet, show server status
+    app.get('/', (req, res) => {
+        res.send('<h1>Authentic ERP Server is running!</h1><p>The backend is ready, but frontend build (dist/) not found.</p>');
+    });
 }
 app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ limit: '100mb', extended: true }));
