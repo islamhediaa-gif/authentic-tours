@@ -815,7 +815,10 @@ if (fs.existsSync(distPath)) {
   
   // This catch-all route handles all requests by serving index.html
   // It MUST be the last route defined.
-  app.get('(.*)', (req, res) => {
+  app.get('/(.*)', (req, res) => {
+    if (req.path.startsWith('/api')) {
+      return res.status(404).json({ success: false, message: 'API endpoint not found' });
+    }
     res.sendFile(path.join(distPath, 'index.html'));
   });
 } else {
