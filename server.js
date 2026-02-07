@@ -813,12 +813,14 @@ if (fs.existsSync(distPath)) {
   console.log(`📂 Serving frontend from: ${distPath}`);
   app.use(express.static(distPath));
   
-  // This catch-all route handles all requests by serving index.html
-  // It MUST be the last route defined.
-  app.get('/(.*)', (req, res) => {
+  // This catch-all middleware handles all requests by serving index.html
+  // It MUST be the last one defined to act as a fallback.
+  app.use((req, res) => {
+    // If it's an API request that wasn't caught, return 404
     if (req.path.startsWith('/api')) {
       return res.status(404).json({ success: false, message: 'API endpoint not found' });
     }
+    // For everything else, serve the frontend
     res.sendFile(path.join(distPath, 'index.html'));
   });
 } else {
