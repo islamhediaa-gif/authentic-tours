@@ -45,7 +45,7 @@ if (fs.existsSync(distPath)) {
   app.get('/', (req, res) => {
     res.sendFile(path.join(distPath, 'index.html'));
   });
-  app.get('*', (req, res) => {
+  app.get('/*', (req, res) => {
     if (!req.url.startsWith('/api')) {
       res.sendFile(path.join(distPath, 'index.html'));
     }
