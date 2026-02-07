@@ -28,42 +28,17 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key']
 }));
 
-// Health Check
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', time: new Date().toISOString() });
-});
-
-// Serve Frontend Static Files (When built)
-const distPath = path.join(__dirname, 'dist');
-
-if (fs.existsSync(distPath)) {
-  console.log(`📂 Serving frontend from: ${distPath}`);
-  app.use(express.static(distPath));
-  // Redirect root to frontend
-  app.get('/', (req, res) => {
-    res.sendFile(path.join(distPath, 'index.html'));
-  });
-
-  // Catch-all route for React Router (Single Page Application)
-  // Express 5 requires named parameters for wildcards like :any*
-  app.get('/:any*', (req, res) => {
-    if (!req.url.startsWith('/api')) {
-      res.sendFile(path.join(distPath, 'index.html'));
-    }
-  });
-} else {
-    // If no frontend built yet, show server status
-    app.get('/', (req, res) => {
-        res.send(`<h1>Authentic ERP Server is running!</h1><p>Frontend directory "dist" not found at: ${distPath}. Please ensure "npm run build" finished successfully.</p>`);
-    });
-}
-app.use(express.json({ limit: '100mb' }));
-app.use(express.urlencoded({ limit: '100mb', extended: true }));
-
 // Global Logger to see every request
 app.use((req, res, next) => {
   console.log(`[${new Date().toLocaleTimeString()}] 📥 ${req.method} ${req.url}`);
   next();
+});
+
+// --- ROUTES ---
+
+// Health Check
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', time: new Date().toISOString() });
 });
 
 // Database connection pool configuration
@@ -829,6 +804,26 @@ app.get('/api/dashboard/summary', async (req, res) => {
     res.status(500).json({ success: false, error: error.message });
   }
 });
+
+app.use(express.json({ limit: '100mb' }));
+app.use(express.urlencoded({ limit: '100mb', extended: true }));
+
+// Serve Frontend Static Files (Single Page Application support)
+const distPath = path.join(__dirname, 'dist');
+if (fs.existsSync(distPath)) {
+  console.log(`📂 Serving frontend from: ${distPath}`);
+  app.use(express.static(distPath));
+  
+  // This catch-all route handles all requests by serving index.html
+  // It MUST be the last route defined.
+  app.get('*', (req, res) => {
+    res.sendFile(path.join(distPath, 'index.html'));
+  });
+} else {
+  app.get('/', (req, res) => {
+    res.send('<h1>Authentic ERP Server is running!</h1><p>Frontend (dist/) not found.</p>');
+  });
+}
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, "0.0.0.0", () => {
