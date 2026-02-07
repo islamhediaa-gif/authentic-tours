@@ -34,9 +34,7 @@ app.get('/api/health', (req, res) => {
 });
 
 // Serve Frontend Static Files (When built)
-const distPath = fs.existsSync(path.join(__dirname, 'dist')) 
-  ? path.join(__dirname, 'dist') 
-  : path.join(__dirname, 'vercel_output');
+const distPath = path.join(__dirname, 'dist');
 
 if (fs.existsSync(distPath)) {
   console.log(`📂 Serving frontend from: ${distPath}`);
@@ -53,7 +51,7 @@ if (fs.existsSync(distPath)) {
 } else {
     // If no frontend built yet, show server status
     app.get('/', (req, res) => {
-        res.send(`<h1>Authentic ERP Server is running!</h1><p>The backend is ready, but frontend build directory (dist/ or vercel_output/) not found at: ${distPath}</p>`);
+        res.send(`<h1>Authentic ERP Server is running!</h1><p>Frontend directory "dist" not found at: ${distPath}. Please ensure "npm run build" finished successfully.</p>`);
     });
 }
 app.use(express.json({ limit: '100mb' }));
