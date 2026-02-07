@@ -43,7 +43,10 @@ if (fs.existsSync(distPath)) {
   app.get('/', (req, res) => {
     res.sendFile(path.join(distPath, 'index.html'));
   });
-  app.get('/*', (req, res) => {
+
+  // Catch-all route for React Router (Single Page Application)
+  // Express 5 requires named parameters for wildcards like :any*
+  app.get('/:any*', (req, res) => {
     if (!req.url.startsWith('/api')) {
       res.sendFile(path.join(distPath, 'index.html'));
     }

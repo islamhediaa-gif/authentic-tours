@@ -5,7 +5,7 @@ export default defineConfig({
   plugins: [react()],
   base: '',
   build: {
-    outDir: 'vercel_output',
+    outDir: 'dist',
     emptyOutDir: true,
     cssCodeSplit: true,
     assetsInlineLimit: 0,
