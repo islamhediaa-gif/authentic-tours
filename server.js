@@ -18,6 +18,8 @@ if (fs.existsSync(path.join(__dirname, '.env.local'))) {
 }
 
 const app = express();
+app.use(express.json({ limit: '100mb' }));
+app.use(express.urlencoded({ limit: '100mb', extended: true }));
 app.use(cors({
   origin: function (origin, callback) {
     // السماح بكل الروابط مؤقتاً أثناء التجهيز أو وضع روابط محددة
@@ -805,9 +807,6 @@ app.get('/api/dashboard/summary', async (req, res) => {
   }
 });
 
-app.use(express.json({ limit: '100mb' }));
-app.use(express.urlencoded({ limit: '100mb', extended: true }));
-
 // Serve Frontend Static Files (Single Page Application support)
 const distPath = path.join(__dirname, 'dist');
 if (fs.existsSync(distPath)) {
@@ -816,7 +815,7 @@ if (fs.existsSync(distPath)) {
   
   // This catch-all route handles all requests by serving index.html
   // It MUST be the last route defined.
-  app.get('*', (req, res) => {
+  app.get('(.*)', (req, res) => {
     res.sendFile(path.join(distPath, 'index.html'));
   });
 } else {
